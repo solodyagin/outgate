@@ -606,7 +606,7 @@ type ReconnectPolicy struct {
 }
 ```
 
-`register_ack` подтверждает полный набор путей и возвращает версию протокола, согласованные лимиты/таймауты и параметры readiness при её использовании. `register_nack` содержит `reason` и безопасный `detail`. Подтверждение отправляется только после атомарной фиксации регистрации со статусом путей active/pending, указанным в ack; pending не публикуется в production router до активации. При невозможности доставить ack сессия удаляется из активного выбора. Ack также сообщает session_id, negotiated protocol_minor/capabilities, route_revision и проверенные credential expiry timestamps (без grant secret); состояние registered не равно ready по п. 3.21.
+`register_ack` подтверждает полный набор путей и возвращает версию протокола, согласованные лимиты/таймауты и параметры readiness при её использовании. `register_nack` содержит `code`, `retryable` и безопасный `detail` по wire-контракту. Подтверждение отправляется только после атомарной фиксации регистрации со статусом путей active/pending, указанным в ack; pending не публикуется в production router до активации. При невозможности доставить ack сессия удаляется из активного выбора. Ack также сообщает session_id, negotiated protocol_minor/capabilities, route_revision и проверенные credential expiry timestamps (без grant secret); состояние registered не равно ready по п. 3.21.
 
 Точные структуры, коды, размерности, wire layout и переходы состояний закреплены в [protocol.md](protocol.md) и [protocol.schema.json](protocol.schema.json); дальнейшие изменения перед реализацией адаптеров синхронизируются с ними и golden fixtures. Оба адаптера проверяются общими контрактными тестами.
 
