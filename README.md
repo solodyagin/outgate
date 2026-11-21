@@ -5,8 +5,9 @@
 - `docs/` — нормативные требования, протокол и [статус реализации](docs/implementation-status.md).
 - `tests/fixtures/protocol/v1/` — нормативный golden corpus.
 - [outgate-sdk](https://github.com/solodyagin/outgate-sdk) — отдельный Go-модуль `github.com/solodyagin/outgate-sdk`, сейчас только чистый пакет `protocol/v1`.
+- [outgate-service-template](https://github.com/solodyagin/outgate-service-template) — отдельный репозиторий шаблона сервиса; пока пуст, реализация boilerplate ещё не начата.
 
-Конечная поставка разделена на gateway, SDK и service-template repositories. SDK вынесен из этого repository; service-template ещё не создан. Прикладной `outgateclient` и transport adapters ещё не реализованы. Локальных `replace` и обязательного `go.work` нет.
+Конечная поставка разделена на gateway, SDK и service-template repositories. SDK вынесен из этого repository; репозиторий service-template создан отдельно. Сам шаблон и versioned releases ещё отсутствуют. Прикладной `outgateclient` и transport adapters ещё не реализованы. Локальных `replace` и обязательного `go.work` нет.
 
 ## Проверка
 

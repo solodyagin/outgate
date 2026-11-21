@@ -1,10 +1,10 @@
 # Разработка сервиса: SDK и выдаваемый boilerplate
 
-Статус: контракт поставки первой версии. Wire-основа SDK (`protocol/v1`) перенесена в отдельный [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk), module path — `github.com/solodyagin/outgate-sdk` (см. [статус реализации](implementation-status.md)). Прикладной `outgateclient`, versioned SDK release, отдельный template repository и работающий gateway ещё отсутствуют. Этот документ не предлагает скачивать несуществующий release.
+Статус: контракт поставки первой версии. Wire-основа SDK (`protocol/v1`) перенесена в отдельный [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk), module path — `github.com/solodyagin/outgate-sdk` (см. [статус реализации](implementation-status.md)). Для шаблона создан отдельный [solodyagin/outgate-service-template](https://github.com/solodyagin/outgate-service-template), локальный checkout — `../outgate-service-template/`. Repository пока пуст; реализация boilerplate, прикладной `outgateclient`, versioned SDK release и работающий gateway ещё отсутствуют. Этот документ не предлагает скачивать несуществующий release.
 
 ## 1. Что получает разработчик
 
-Разработчик получает отдельный `outgate-service-template`, pinned release `outgate-sdk`, README и конфигурационный пример своего service_id. Код gateway, административные секреты, deployment-grant issuer и права управления политиками не передаются. Организация может ограничить доступ к gateway repository независимо от SDK/template. Шлюз запускается оператором; разработчик пользуется общим development stand либо проверяет свой handler локально.
+По контракту поставки разработчик получает отдельный [outgate-service-template](https://github.com/solodyagin/outgate-service-template), pinned release `outgate-sdk`, README и конфигурационный пример своего service_id. Этот комплект ещё предстоит реализовать и проверить; создание repository не закрывает приёмку boilerplate. Код gateway, административные секреты, deployment-grant issuer и права управления политиками не передаются. Организация может ограничить доступ к gateway repository независимо от SDK/template. Шлюз запускается оператором; разработчик пользуется общим development stand либо проверяет свой handler локально.
 
 Пакет подключения — `github.com/solodyagin/outgate-sdk/outgateclient`, module — `github.com/solodyagin/outgate-sdk`. После реализации `outgateclient` и публикации versioned SDK release dependency устанавливается обычным Go tooling:
 

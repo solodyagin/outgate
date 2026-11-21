@@ -1604,7 +1604,7 @@ Microservice               Gateway                    Admin / External client
 
 ### 10.3. Отдельные репозитории шлюза, SDK и шаблона сервиса
 
-Поставка разделена на **три самостоятельных репозитория** и три Go modules. Разработчику прикладного сервиса выдаётся boilerplate и доступ к released SDK, а не исходники шлюза. Репозитории gateway и SDK опубликованы: [solodyagin/outgate](https://github.com/solodyagin/outgate) и [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk). SDK вынесен в самостоятельный module `github.com/solodyagin/outgate-sdk`; versioned releases и отдельный template repository ещё отсутствуют. Ниже показана целевая структура поставки; наличие repository не означает готовности всех перечисленных компонентов. Нормативные protocol/schema и golden corpus хранятся в gateway repository. SDK содержит локальный snapshot schema/fixtures для автономных offline-тестов; изменения контракта синхронно переносятся в SDK с побайтовой сверкой.
+Поставка разделена на **три самостоятельных репозитория** и три Go modules. Разработчику прикладного сервиса выдаётся boilerplate и доступ к released SDK, а не исходники шлюза. Репозитории gateway и SDK опубликованы: [solodyagin/outgate](https://github.com/solodyagin/outgate) и [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk). SDK вынесен в самостоятельный module `github.com/solodyagin/outgate-sdk`. Для шаблона создан отдельный repository [solodyagin/outgate-service-template](https://github.com/solodyagin/outgate-service-template), локальный checkout — `../outgate-service-template/`. Repository пока пуст: исходники boilerplate, его Go module, CI и versioned releases ещё отсутствуют. Ниже показана целевая структура поставки; наличие repository не означает готовности всех перечисленных компонентов. Нормативные protocol/schema и golden corpus хранятся в gateway repository. SDK содержит локальный snapshot schema/fixtures для автономных offline-тестов; изменения контракта синхронно переносятся в SDK с побайтовой сверкой.
 
 ```text
 outgate/                              # https://github.com/solodyagin/outgate
@@ -1637,8 +1637,8 @@ outgate-sdk/                          # отдельный репозитори�
 ├── examples/
 └── tests/                        # SDK, compatibility, shared golden corpus
 
-outgate-service-template/             # отдельный выдаваемый boilerplate
-├── go.mod                        # собственный module, require released outgate-sdk
+outgate-service-template/             # https://github.com/solodyagin/outgate-service-template; целевая структура
+├── go.mod                        # планируется github.com/solodyagin/outgate-service-template; require released SDK
 ├── cmd/service/                  # composition root, signals, Run/Close
 ├── internal/
 │   ├── app/                      # запуск приложения и настройка SDK

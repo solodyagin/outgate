@@ -10,7 +10,7 @@
 ## Границы архитектуры
 
 - Код самостоятельный. Запрещены reverst imports, транзитивные зависимости, vendoring, копирование/адаптация исходников и запуск reverst как обязательного инструмента.
-- Конечная поставка: отдельные gateway, SDK и service-template repositories/modules (ТЗ 10.3). SDK находится в отдельном repository `https://github.com/solodyagin/outgate-sdk` (module `github.com/solodyagin/outgate-sdk`); локальный checkout может располагаться рядом с gateway в `../outgate-sdk/`. Вложенного SDK в этом repository нет. Не создавайте фиктивные remote repositories/releases.
+- Конечная поставка: отдельные gateway, SDK и service-template repositories/modules (ТЗ 10.3). SDK находится в отдельном repository `https://github.com/solodyagin/outgate-sdk` (module `github.com/solodyagin/outgate-sdk`); локальный checkout может располагаться рядом с gateway в `../outgate-sdk/`. Шаблон сервиса имеет отдельный repository `https://github.com/solodyagin/outgate-service-template` (локально, например `../outgate-service-template/`); repository пока пуст, готового boilerplate нет. Вложенных SDK и service-template в этом repository нет. Не создавайте фиктивные remote repositories/releases.
 - SDK не импортирует gateway; `protocol/v1` содержит только wire types/codecs/чистые helpers. SQL, sockets, RBAC и административный код сюда не входят. Не дублируйте wire definitions в gateway.
 - Не начинайте QUIC adapter до сквозного spike напрямую на quic-go с reverse HTTP/3, stream 0 exclusion, streaming/cancel, internal CONNECT и проверкой Linux/Windows. Не подменяйте HTTP/3 самодельным framing поверх QUIC.
 
