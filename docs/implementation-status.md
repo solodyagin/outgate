@@ -4,11 +4,11 @@
 
 ## Точка продолжения
 
-- **Текущая задача:** шаг `register_ack`/`register_nack` этапа 1 завершён; далее модели `request_start`/`response_start` с проверками headers/URI.
-- **Завершённые шаги:** добавлены модели ack/nack, строгий decode и чистая сверка ack с исходным register и режимом окружения; исправлена неточность `reason` → `code` в ТЗ без изменения wire-контракта. Подробности — в разделе «Реализовано».
-- **Незавершённая работа:** остальные 16 control messages, headers/URI, state machines и подписи ещё не реализованы. Дальнейшие задачи перечислены в разделе «Следующая работа». Ни один этап целиком не принят.
-- **Проверки текущей сессии (2026-11-21):** перед изменениями сверены точка продолжения, protocol/schema/fixtures и код, рабочее дерево было чистым; fixture verifier, SDK tests/race/vet, Windows cross-compile, два коротких fuzz-прогона и `git diff --check` — PASS. Команды и ограничения приведены в разделе «Проверки ack/nack»; результаты начальной реализации ниже записаны ранее.
-- **Блокеры:** для следующего шага по control messages при сверке не выявлены. До QUIC adapter остаётся обязательным сквозной quic-go spike по ТЗ 2.3.
+- **Текущая задача:** переименование проекта в Outgate завершено, включая все четыре прежних локальных коммита; следующий шаг этапа 1 — модели `request_start`/`response_start` с проверками headers/URI.
+- **Завершённые шаги:** SDK переименован в `outgate-sdk`, прикладной API — в `outgateclient`; согласованы документация, CI, инструкции и wire identifiers, bootstrap golden bytes и HMAC vectors. Добавлены негативные/граничные проверки bootstrap. Реализованные ранее ack/nack сохранены.
+- **Незавершённая работа:** остальные 16 control messages, headers/URI, state machines и подписи ещё не реализованы. Дальнейшие задачи — в разделе «Следующая работа». Ни один этап целиком не принят.
+- **Проверки текущей сессии (2026-11-21):** fixture verifier, SDK race/vet, Windows cross-compile, fixture verifier и SDK tests для каждого из четырёх переписанных snapshots, ссылки и `git diff --check` — PASS. Подробнее — «Проверки переименования»; результаты начальной реализации и ack/nack ниже записаны в предыдущих сессиях.
+- **Блокеры:** для следующего шага по control messages не выявлены. До QUIC adapter остаётся обязательным сквозной quic-go spike по ТЗ 2.3.
 - **Следующее действие:** прочитать `outgate-sdk/AGENTS.md`, сопоставить `request_start`/`response_start` в protocol/schema/fixtures и добавить модели и строгий decode с проверками headers/URI и негативными/граничными тестами.
 
 ## Реализовано
@@ -49,9 +49,20 @@
 
 Production запуск не реализован. Отсутствуют sockets, application proxy, credentials verification, durable control/replay/session stores и Admin Web. Инструкций публичного развёртывания на этом этапе нет.
 
-## Проверки ack/nack
+## Проверки переименования
 
 Текущая сессия 2026-11-21, Linux amd64 / Go 1.27.4:
+
+- `python3 tests/fixtures/protocol/v1/verify.py` — PASS: 19 control message types, 13 WSS cases, 4 пересчитанных HMAC/tamper vectors, QUIC bootstrap. Полноценная JSON Schema validation и adapter integration этим скриптом не выполняются.
+- Из `outgate-sdk/`: `GOWORK=off GOPROXY=off GOCACHE=/tmp/outgate-go-cache go test -race ./...` и `go vet ./...` с теми же environment flags — PASS; registry не использовался.
+- Windows amd64: `go build ./...` и `go test -c -o /tmp/outgate-rename-8cq10lmc/protocol-windows.test.exe ./protocol/v1` с теми же flags и `GOOS=windows GOARCH=amd64` — PASS. Native Windows runtime-проверка не выполнена.
+- Каждый из четырёх переписанных commits отдельно выгружен в snapshot: fixture verifier и offline `go test ./...` — PASS. Проверены все trees, paths и commit messages: прежних идентификаторов проекта нет. Авторы, даты и порядок коммитов сохранены; SHA изменились. Удалённых repositories/push нет.
+- Контрольные JSON/frame golden bytes и bootstrap credential/frame payload сохранены; изменены только magic, ALPN, signature/header identifiers и соответствующие HMAC. Bootstrap тесты проверяют границы credential, неверный magic и прежний preface, kind, length и UTF-8; прежний preface отклоняется.
+- Относительные Markdown file links и `git diff --check` — PASS. Dependencies не добавлены. Исходная история сохранена отдельно в `/tmp/outgate-rename-8cq10lmc/before-rename.bundle`; это локальная временная резервная копия, не release artifact.
+
+## Проверки ack/nack
+
+Предыдущая сессия 2026-11-21, Linux amd64 / Go 1.27.4:
 
 - `python3 tests/fixtures/protocol/v1/verify.py` — PASS; нормативные fixtures и schema не изменены. Этот sanity verifier не выполняет полноценную JSON Schema validation.
 - В `outgate-sdk/`: `GOWORK=off GOPROXY=off go test ./...`, `go test -race ./...` и `go vet ./...` с теми же environment flags — PASS. Для всех Go-команд задан `GOCACHE=/tmp/outgate-example-plan-go-cache`, поскольку штатный cache недоступен для записи; registry не использовался.

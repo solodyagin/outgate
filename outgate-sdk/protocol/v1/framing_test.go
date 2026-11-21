@@ -112,6 +112,50 @@ func TestQUICGolden(t *testing.T) {
 	}
 }
 
+func TestBootstrapBoundaries(t *testing.T) {
+	for _, kind := range []CredentialKind{DevelopmentBearer, ProductionGrant} {
+		for _, size := range []int{1, MaxCredentialBytes} {
+			credential := bytes.Repeat([]byte("x"), size)
+			var wire bytes.Buffer
+			if err := WriteBootstrap(&wire, kind, credential); err != nil {
+				t.Fatal(err)
+			}
+			if wire.Len() != 11+size || string(wire.Bytes()[:8]) != "Outgate1" {
+				t.Fatal("unexpected preface layout")
+			}
+			got, err := ReadBootstrap(iotest.OneByteReader(&wire), kind)
+			if err != nil || !bytes.Equal(got, credential) || wire.Len() != 0 {
+				t.Fatal("credential boundary", size, err)
+			}
+		}
+	}
+	for _, tc := range []struct {
+		name   string
+		header []byte
+	}{
+		{"wrong_magic", []byte("outgate1\x01\x00\x01")},
+		{"legacy_preface", []byte{0x52, 0x41, 0x47, 0x31, 1, 0, 4, 't', 'e', 's', 't'}},
+		{"wrong_kind", []byte("Outgate1\x02\x00\x01")},
+		{"zero_length", []byte("Outgate1\x01\x00\x00")},
+		{"over_limit", []byte("Outgate1\x01\x10\x01")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ReadBootstrap(bytes.NewReader(tc.header), DevelopmentBearer); !errors.Is(err, ErrProtocol) {
+				t.Fatal("invalid header not rejected before credential read", err)
+			}
+		})
+	}
+	if _, err := ReadBootstrap(bytes.NewReader([]byte("Outgate1\x01\x00\x01\xff")), DevelopmentBearer); !errors.Is(err, ErrProtocol) {
+		t.Fatal("invalid UTF-8 accepted", err)
+	}
+	for _, credential := range [][]byte{nil, bytes.Repeat([]byte("x"), MaxCredentialBytes+1), {0xff}} {
+		var wire bytes.Buffer
+		if err := WriteBootstrap(&wire, DevelopmentBearer, credential); !errors.Is(err, ErrProtocol) || wire.Len() != 0 {
+			t.Fatal("invalid credential written", err)
+		}
+	}
+}
+
 func TestControlFramesBoundaries(t *testing.T) {
 	var b bytes.Buffer
 	for _, value := range []string{`{"type":"a"}`, `{"type":"b"}`} {
