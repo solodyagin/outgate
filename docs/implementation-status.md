@@ -4,18 +4,18 @@
 
 ## Точка продолжения
 
-- **Текущая задача:** переименование проекта в Outgate завершено, включая все четыре прежних локальных коммита; следующий шаг этапа 1 — модели `request_start`/`response_start` с проверками headers/URI.
-- **Завершённые шаги:** SDK переименован в `outgate-sdk`, прикладной API — в `outgateclient`; согласованы документация, CI, инструкции и wire identifiers, bootstrap golden bytes и HMAC vectors. Добавлены негативные/граничные проверки bootstrap. Реализованные ранее ack/nack сохранены.
-- **Незавершённая работа:** остальные 16 control messages, headers/URI, state machines и подписи ещё не реализованы. Дальнейшие задачи — в разделе «Следующая работа». Ни один этап целиком не принят.
-- **Проверки текущей сессии (2026-11-21):** fixture verifier, SDK race/vet, Windows cross-compile, fixture verifier и SDK tests для каждого из четырёх переписанных snapshots, ссылки и `git diff --check` — PASS. Подробнее — «Проверки переименования»; результаты начальной реализации и ack/nack ниже записаны в предыдущих сессиях.
-- **Блокеры:** для следующего шага по control messages не выявлены. До QUIC adapter остаётся обязательным сквозной quic-go spike по ТЗ 2.3.
-- **Следующее действие:** прочитать `outgate-sdk/AGENTS.md`, сопоставить `request_start`/`response_start` в protocol/schema/fixtures и добавить модели и строгий decode с проверками headers/URI и негативными/граничными тестами.
+- **Текущая задача:** выделение SDK в отдельный repository завершено локально; следующий шаг этапа 1 — модели `request_start`/`response_start` в SDK с проверками headers/URI.
+- **Завершённые шаги:** исходники и инструкции SDK перенесены из вложенного `outgate-sdk/` в соседний checkout `/home/pro/Projects/outgate-sdk` с существующим origin `https://github.com/solodyagin/outgate-sdk.git`. Module path — `github.com/solodyagin/outgate-sdk`. SDK получил автономные CI, schema/fixture snapshot и точку продолжения; тестовые пути исправлены. Обновлены ТЗ, README, service development и инструкции gateway. Gateway CI проверяет нормативный corpus, SDK CI — Go-код и snapshot. Wire-контракт и golden bytes сохранены.
+- **Незавершённая работа:** изменения в обоих checkout ещё не отправлены; versioned SDK release, `outgateclient` и template repository отсутствуют. Остальные 16 control messages, headers/URI, state machines и подписи ещё не реализованы. Ни один этап целиком не принят.
+- **Проверки текущей сессии (2026-11-21):** fixture verifier в gateway и SDK — PASS; SDK `go test -race ./...`, `go vet ./...`, `go list -m all` при `GOWORK=off GOPROXY=off GOCACHE=/tmp/outgate-go-cache` — PASS, внешних modules нет. Windows amd64 `go build ./...` и `go test -c -o /tmp/outgate-sdk-extracted-windows.test.exe ./protocol/v1` с теми же flags — PASS (cross-compile, без native runtime). Побайтовая сверка schema/fixtures с gateway и исходной Git revision, относительные Markdown links, формат Go и `git diff --check` — PASS. Remote CI не запускался; результаты прошлых сессий ниже не являются повторными проверками этой сессии.
+- **Блокеры:** для дальнейшей работы по control messages не выявлены. До QUIC adapter остаётся обязательным сквозной quic-go spike по ТЗ 2.3.
+- **Следующее действие:** в отдельном SDK checkout прочитать `AGENTS.md` и `docs/implementation-status.md`, сопоставить `request_start`/`response_start` в нормативных protocol/schema/fixtures и добавить модели и строгий decode с проверками headers/URI и негативными/граничными тестами.
 
 ## Реализовано
 
 | Часть | Код / проверка | Связь с контрактом |
 | --- | --- | --- |
-| Самостоятельный SDK module, standard library only | `outgate-sdk/go.mod` | ТЗ 2.3, 10.3 |
+| Самостоятельный SDK module, standard library only | [SDK go.mod](https://github.com/solodyagin/outgate-sdk/blob/main/go.mod) | ТЗ 2.3, 10.3 |
 | u64 decimal strings, предел uint64 | `primitives.go`, `TestU64` | Protocol §2 |
 | Ограниченный JSON, duplicate keys, UTF-8 и depth | `json.go`, `TestJSONValidation`, fuzz target | Protocol §2, §5.2 |
 | QUIC preface/control framing | `framing.go`, `TestQUICGolden`, truncation/boundary tests | Protocol §5.2; только serialization, не reverse HTTP/3 spike |
@@ -24,9 +24,9 @@
 | Строгие register_ack/register_nack и semantic validation | `register_response.go`, `register_response_test.go`: golden round trip, missing/null/type/case/unknown fields, JSON/extensions, ranges, session ID, paths/capabilities и retryable | Protocol §2, §3.3, §12; wire-контракт и нормативные fixtures сохранены |
 | Сверка ack с исходным register | `RegisterAck.ValidateForRegister`: paths, minor/capabilities, concurrency, generation, readiness callback и production expiry | Protocol §3.1–3.3; без clocks/I/O, проверки credentials, актуальности expiry, durable state и готовности |
 | Prefixes, однократный decode, segment permissions | `path.go`, `TestPaths` | ТЗ 3.2–3.3; root authorization frontend выполняется будущим gateway |
-| Инструкции разработки и CI | корневой/SDK AGENTS.md; `.github/workflows/checks.yml` | Проверки Linux/Windows после подключения к GitHub |
+| Инструкции разработки и CI | `AGENTS.md` и `.github/workflows/checks.yml` в каждом repository | Gateway: нормативный corpus; SDK: автономные fixtures и Go Linux/Windows |
 
-Пути к Go-файлам в таблице относительны `outgate-sdk/protocol/v1/`. Тесты codec не доказывают routing atomicity, сетевую совместимость, подписи или production security. Существующий Python verifier проверяет исходные HMAC vectors; Go signing/verifier ещё отсутствует.
+Пути к Go-файлам в таблице относительны `protocol/v1/` отдельного [SDK repository](https://github.com/solodyagin/outgate-sdk). SDK хранит побайтовый snapshot schema/fixtures из gateway; исходный нормативный corpus остаётся здесь. Тесты codec не доказывают routing atomicity, сетевую совместимость, подписи или production security. Существующий Python verifier проверяет исходные HMAC vectors; Go signing/verifier ещё отсутствует.
 
 ## Следующая работа
 
@@ -51,7 +51,7 @@ Production запуск не реализован. Отсутствуют socket
 
 ## Проверки переименования
 
-Текущая сессия 2026-11-21, Linux amd64 / Go 1.27.4:
+Предыдущая сессия 2026-11-21, Linux amd64 / Go 1.27.4:
 
 - `python3 tests/fixtures/protocol/v1/verify.py` — PASS: 19 control message types, 13 WSS cases, 4 пересчитанных HMAC/tamper vectors, QUIC bootstrap. Полноценная JSON Schema validation и adapter integration этим скриптом не выполняются.
 - Из `outgate-sdk/`: `GOWORK=off GOPROXY=off GOCACHE=/tmp/outgate-go-cache go test -race ./...` и `go vet ./...` с теми же environment flags — PASS; registry не использовался.

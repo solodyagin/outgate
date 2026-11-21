@@ -1,41 +1,28 @@
 # Outgate — Reverse API Gateway
 
-Реализация [технического задания](docs/requirements.md). Работа начата с wire-основы этапа 1; работающего шлюза и публичного SDK release пока нет.
+Репозиторий: [solodyagin/outgate](https://github.com/solodyagin/outgate). Реализация [технического задания](docs/requirements.md). Начат этап 1; работающего шлюза и versioned SDK release пока нет.
 
 - `docs/` — нормативные требования, протокол и [статус реализации](docs/implementation-status.md).
-- `outgate-sdk/` — самостоятельный Go-модуль SDK, пока только чистый пакет `protocol/v1`.
-- `tests/fixtures/protocol/v1/` — исходный golden corpus.
+- `tests/fixtures/protocol/v1/` — нормативный golden corpus.
+- [outgate-sdk](https://github.com/solodyagin/outgate-sdk) — отдельный Go-модуль `github.com/solodyagin/outgate-sdk`, сейчас только чистый пакет `protocol/v1`.
 
-По ТЗ конечная поставка разделяется на три репозитория: gateway, SDK и service-template. Пока исходники SDK расположены здесь для начальной разработки; `github.com/yourorg/outgate-sdk` — явно неопубликованный placeholder. Локальных `replace` и обязательного `go.work` нет.
+Конечная поставка разделена на gateway, SDK и service-template repositories. SDK вынесен из этого repository; service-template ещё не создан. Прикладной `outgateclient` и transport adapters ещё не реализованы. Локальных `replace` и обязательного `go.work` нет.
 
 ## Проверка
 
-Нужны Go 1.27.4 и Python 3.12+. Сторонних Go-зависимостей пока нет; `go.sum` не требуется. Эти проверки не запускают сетевые слушатели.
-
-Из корня, Linux:
+Из корня gateway, Python 3.12+:
 
 ```bash
 python3 tests/fixtures/protocol/v1/verify.py
-cd outgate-sdk
-GOWORK=off go test -race ./...
-GOWORK=off go vet ./...
 ```
 
-Windows PowerShell:
+В Windows используется `python` вместо `python3`. CI gateway проверяет нормативный corpus; Linux/Windows Go-проверки находятся в отдельном SDK repository. Команды SDK — в его [README](https://github.com/solodyagin/outgate-sdk#readme).
 
-```powershell
-python tests/fixtures/protocol/v1/verify.py
-Set-Location outgate-sdk
-$env:GOWORK = 'off'
-go test ./...
-go vet ./...
-```
-
-Фаззинг парсеров из `outgate-sdk/`:
+SDK содержит локальный snapshot schema/fixtures, поэтому собирается и тестируется без gateway checkout. При изменении wire-контракта обновляйте ТЗ, protocol/schema, fixtures и SDK согласованно. Для соседних checkout побайтовая сверка из gateway:
 
 ```bash
-go test ./protocol/v1 -run='^$' -fuzz=FuzzDecodeChunk -fuzztime=10s
-go test ./protocol/v1 -run='^$' -fuzz=FuzzControlJSON -fuzztime=10s
+cmp docs/protocol.schema.json ../outgate-sdk/docs/protocol.schema.json
+diff -r tests/fixtures/protocol/v1 ../outgate-sdk/tests/fixtures/protocol/v1
 ```
 
-Тесты SDK читают нормативные fixtures из родительской директории. Перед выделением SDK в отдельный repository потребуется упаковать snapshot контракта; сборка самого Go-пакета от этих файлов не зависит.
+Происхождение и порядок обновления snapshot описаны в SDK: `docs/contract-snapshot.md`.

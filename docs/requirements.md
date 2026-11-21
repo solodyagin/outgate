@@ -275,7 +275,7 @@ Admin API работает на отдельном адресе. Development и�
 
 ### 3.10. Публичный API Go-клиента
 
-SDK поставляется отдельным Go module/repository, импортируемый package — github.com/yourorg/outgate-sdk/outgateclient (placeholder organization). Прикладные сервисы не импортируют код gateway; выдаваемый самостоятельный boilerplate и правила зависимостей описаны в п. 10.3 и [service-development.md](service-development.md).
+SDK поставляется отдельным Go module/repository [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk); планируемый прикладной package — `github.com/solodyagin/outgate-sdk/outgateclient`. Сейчас реализован только `protocol/v1`; прикладной API и versioned release ещё отсутствуют. Прикладные сервисы не импортируют код gateway; выдаваемый самостоятельный boilerplate и правила зависимостей описаны в п. 10.3 и [service-development.md](service-development.md).
 
 ```go
 package outgateclient
@@ -1534,7 +1534,7 @@ UI является обязательным проверенным компон
 
 ### 10.1. Пример клиента
 
-Иллюстрация development-использования будущего Go-пакета; module path github.com/yourorg/outgate-sdk заменяется фактическим адресом отдельного SDK repository при публикации. Для публичного production дополнительно обязательны bootstrap и зависимости п. 10.8. Тестовый сертификат шлюза должен быть выпущен доверенным для клиента CA. Ниже используется переносимый Ctrl+C для консольного примера; production host wrapper добавляет Linux SIGTERM или Windows SCM Stop по п. 5.4.1.
+Иллюстрация development-использования будущего Go-пакета; module path `github.com/solodyagin/outgate-sdk` соответствует отдельному опубликованному [SDK repository](https://github.com/solodyagin/outgate-sdk). Прикладной `outgateclient` и SDK release ещё не реализованы/не выпущены. Для публичного production дополнительно обязательны bootstrap и зависимости п. 10.8. Тестовый сертификат шлюза должен быть выпущен доверенным для клиента CA. Ниже используется переносимый Ctrl+C для консольного примера; production host wrapper добавляет Linux SIGTERM или Windows SCM Stop по п. 5.4.1.
 
 ```go
 package main
@@ -1547,7 +1547,7 @@ import (
     "os/signal"
     "strings"
 
-    "github.com/yourorg/outgate-sdk/outgateclient"
+    "github.com/solodyagin/outgate-sdk/outgateclient"
 )
 
 func main() {
@@ -1604,11 +1604,11 @@ Microservice               Gateway                    Admin / External client
 
 ### 10.3. Отдельные репозитории шлюза, SDK и шаблона сервиса
 
-Поставка разделена на **три самостоятельных репозитория** и три Go modules. Разработчику прикладного сервиса выдаётся boilerplate и доступ к released SDK, а не исходники шлюза. Приведённые GitHub organization/repository URLs являются placeholders; перед публикацией заменяются фактическими адресами. Создание удалённых репозиториев и выпуск модулей — результаты реализации, не выполненные операции этого документа.
+Поставка разделена на **три самостоятельных репозитория** и три Go modules. Разработчику прикладного сервиса выдаётся boilerplate и доступ к released SDK, а не исходники шлюза. Репозитории gateway и SDK опубликованы: [solodyagin/outgate](https://github.com/solodyagin/outgate) и [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk). SDK вынесен в самостоятельный module `github.com/solodyagin/outgate-sdk`; versioned releases и отдельный template repository ещё отсутствуют. Ниже показана целевая структура поставки; наличие repository не означает готовности всех перечисленных компонентов. Нормативные protocol/schema и golden corpus хранятся в gateway repository. SDK содержит локальный snapshot schema/fixtures для автономных offline-тестов; изменения контракта синхронно переносятся в SDK с побайтовой сверкой.
 
 ```text
-outgate-gateway/                      # отдельный закрываемый/публикуемый репозиторий
-├── go.mod                        # module github.com/yourorg/outgate-gateway
+outgate/                              # https://github.com/solodyagin/outgate
+├── go.mod                        # module github.com/solodyagin/outgate
 ├── cmd/
 │   ├── outgate-gateway/
 │   └── outgate-admin-web/
@@ -1626,7 +1626,7 @@ outgate-gateway/                      # отдельный закрываемы�
 └── tests/                        # integration, golden corpus, security
 
 outgate-sdk/                          # отдельный репозиторий и Go module
-├── go.mod                        # module github.com/yourorg/outgate-sdk
+├── go.mod                        # module github.com/solodyagin/outgate-sdk
 ├── outgateclient/                    # единственная прикладная Go API surface
 ├── protocol/v1/                  # wire models/codecs/constants без gateway logic
 ├── internal/
@@ -1651,7 +1651,7 @@ outgate-service-template/             # отдельный выдаваемый 
 └── tests/                        # app handlers/config/start-stop smoke
 ```
 
-- SDK импортируется как `github.com/yourorg/outgate-sdk/outgateclient`; service go.mod фиксирует опубликованную SemVer-версию SDK. Шлюз не импортируется в прикладное приложение, не копируется в его repository и не нужен на машине разработчика для local mode. Go SDK статически входит в обычный service binary; отдельный SDK daemon/sidecar не требуется.
+- SDK импортируется как `github.com/solodyagin/outgate-sdk/outgateclient`; service go.mod фиксирует опубликованную SemVer-версию SDK. Шлюз не импортируется в прикладное приложение, не копируется в его repository и не нужен на машине разработчика для local mode. Go SDK статически входит в обычный service binary; отдельный SDK daemon/sidecar не требуется.
 - Однонаправленные зависимости: service → SDK/outgateclient; SDK → свой protocol/v1 и независимые библиотеки; gateway → при необходимости только SDK/protocol/v1 с pinned версией. SDK никогда не импортирует gateway, его internal packages, Admin API server, control DB/outbox или administrative UI. Public protocol/v1 содержит только wire types/serialization/чистые protocol helpers, не transport sockets/SQL/RBAC runtime; SDK public API не раскрывает quic-go connection types. Общие wire определения не копируются вручную между репозиториями.
 - Нормативные protocol/schema/golden artifacts версионируются согласованно с релизом; SDK release содержит snapshot совместимого контракта. Gateway использует pinned snapshot/SDK protocol package; кодовые зависимости не образуют цикл. CI проверяет import graph, соответствие golden corpus и совместимость gateway N с SDK N/предыдущим поддерживаемым minor. Старое размещение pkg/outgateclient внутри gateway repository не используется.
 - Каждый repository имеет собственные go.mod/go.sum, tags, changelog и CI. Gateway может обновляться без обязательного rebuild сервисов в пределах compatibility matrix. SDK major v2 использует обычный Go module suffix /v2; wire protocol major/version сервиса не меняются автоматически вместе с ним. Web build dependencies существуют только в gateway web/admin.
@@ -1671,7 +1671,7 @@ import (
     "io"
     "net/http"
 
-    "github.com/yourorg/outgate-sdk/outgateclient"
+    "github.com/solodyagin/outgate-sdk/outgateclient"
 )
 
 func APIHandler(
@@ -1765,7 +1765,7 @@ import (
     "net/http"
     "os"
 
-    "github.com/yourorg/outgate-sdk/outgateclient"
+    "github.com/solodyagin/outgate-sdk/outgateclient"
 )
 
 // spaHandler предоставляет index.html fallback и корректные asset 404/cache headers.

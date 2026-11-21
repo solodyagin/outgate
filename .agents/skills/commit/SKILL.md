@@ -45,8 +45,8 @@ description: Подготовить и создать Git-коммит или с
 | Затронутая часть | Проверки |
 | --- | --- |
 | Protocol/schema, fixtures, verifier или SDK | Из корня: `python3 tests/fixtures/protocol/v1/verify.py` |
-| SDK, его зависимости или настройки сборки | Из `outgate-sdk/`: `GOWORK=off go test -race ./...` и `GOWORK=off go vet ./...` |
-| Go-код SDK или его сборка | Отдельно Windows compile из `outgate-sdk/`: `GOWORK=off GOOS=windows GOARCH=amd64 go build ./...`; при изменении тестов также compile затронутых тестовых пакетов через `go test -c` с теми же переменными окружения и выводом в временный каталог |
+| SDK, его зависимости или настройки сборки | Из отдельного SDK checkout (например `../outgate-sdk/`): `GOWORK=off go test -race ./...` и `GOWORK=off go vet ./...` |
+| Go-код SDK или его сборка | Отдельно Windows compile из отдельного SDK checkout (например `../outgate-sdk/`): `GOWORK=off GOOS=windows GOARCH=amd64 go build ./...`; при изменении тестов также compile затронутых тестовых пакетов через `go test -c` с теми же переменными окружения и выводом в временный каталог |
 
 Для изменений только документации или скиллов проверь ссылки, формат и согласованность инструкций; Go-проверки нужны, если изменяются описанные команды сборки или поведение SDK. Для новых модулей выбирай проверки по их собственным инструкциям и CI.
 
