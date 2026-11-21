@@ -12,6 +12,8 @@
 
 Конечная поставка разделена на gateway, SDK и service-template repositories. SDK вынесен из этого repository; репозиторий service-template создан отдельно. Сам шаблон и versioned releases ещё отсутствуют. Прикладной `client` и transport adapters ещё не реализованы. Локальных `replace` и обязательного `go.work` нет.
 
+Пакет `internal/registry` моделирует владельцев префиксов, версии, rollout, active-passive и выбор маршрута. Он принимает уже авторизованные регистрации и команды с ожидаемой ревизией. Регистрация создаёт сессию без готовности; готовность сообщает управляющий слой. Долговременное состояние, авторизацию, аудит и доставку запроса обеспечивает будущая интеграция gateway. Для проверки путей и регистрации модуль использует закреплённый `protocol/v1` отдельного SDK.
+
 ## Проверка
 
 Из корня gateway, Python 3.12+:
@@ -22,9 +24,11 @@ python3 -m pip install -r tests/requirements-contracts.txt
 python3 -B tests/verify_admin_openapi.py
 python3 -B tests/verify_config.py
 python3 -B tests/verify_credentials.py
+GOWORK=off go test -race ./...
+GOWORK=off go vet ./...
 ```
 
-В Windows используется `python` вместо `python3`. CI gateway проверяет нормативный corpus, OpenAPI, схемы конфигурации, схемы credentials и примеры. Go-проверки Linux/Windows выполняются в отдельном SDK repository. Команды SDK приведены в его [README](https://github.com/solodyagin/outgate-sdk#readme).
+В Windows используется `python` вместо `python3`. В PowerShell задайте `$env:GOWORK = 'off'` и выполните `go test ./...` и `go vet ./...`. CI gateway проверяет контракты и реестр на Linux и Windows, включая race detector на Linux. У SDK есть отдельные Go-проверки. [README SDK](https://github.com/solodyagin/outgate-sdk#readme).
 
 SDK содержит локальный snapshot schema/fixtures, поэтому собирается и тестируется без gateway checkout. При изменении wire-контракта обновляйте ТЗ, protocol/schema, fixtures и SDK согласованно. Для соседних checkout побайтовая сверка из gateway:
 
