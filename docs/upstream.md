@@ -34,6 +34,6 @@ Outgate реализуется самостоятельно по [requirements.m
 
 Перед этапом 2 обязательны собственный spike напрямую на выбранной quic-go, корректность control stream/reverse HTTP3/QPACK, streaming/cancel/internal CONNECT WebSocket и нативный запуск Linux/Windows. Запуск upstream tests/example не является gate и не заменяет проверки Outgate.
 
-Если публичные API выбранной библиотеки несовместимы с Draft reverse mapping, сначала пересматриваются ADR/requirements/protocol/schema/fixtures. Добавлять reverst или называть произвольный framing поверх QUIC стандартным HTTP/3 запрещено. Реальное выполнение spike пока не подтверждено; protocol fixtures проверяют кодирование, не сетевую совместимость.
+Если публичные API выбранной библиотеки несовместимы с Draft reverse mapping, сначала пересматриваются ADR/requirements/protocol/schema/fixtures. Добавлять reverst или называть произвольный framing поверх QUIC стандартным HTTP/3 запрещено. Сквозной spike выполнен на Linux и Windows amd64 с закреплённой версией quic-go. [Результаты и область проверки](quic-spike.md).
 
-До релиза CI проверяет resolved module graph/imports/vendor/SBOM на отсутствие reverst, а review — происхождение собственного кода. Версии реальных библиотек фиксируются после compatibility/security проверки; их лицензии и уведомления включаются по применимым условиям. Сторонние QUIC/TLS/SQL реализации не переписываются с нуля только ради формального отсутствия dependencies.
+Для этапа 1 проверены module graph, imports, vendor, скрипты CI и тестовый SBOM. Проверка происхождения кода опирается на историю изменений и зафиксированное решение по референсу. Релиз проходит ту же сверку для собственного графа, лицензий и SBOM. [Матрица приёмки](acceptance-matrix.md).
