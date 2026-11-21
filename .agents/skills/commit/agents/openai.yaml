@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Git-коммит'
+  short_description: 'Подготовка и создание Git-коммитов Outgate'
+  default_prompt: 'Используй $commit для подготовки и создания коммита по правилам Outgate.'

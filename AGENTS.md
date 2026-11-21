@@ -27,3 +27,9 @@
 - Для protocol/parser изменений добавляйте негативные и граничные тесты, сверку существующих golden bytes и при необходимости fuzz targets.
 - Проверяйте Windows compile отдельно; cross-compile не объявляйте native Windows runtime-проверкой.
 - Не создавайте обязательный go.work/локальные replace в публикуемых модулях. Команды без сети должны работать без registry для частей, использующих только standard library.
+
+## Локальные скилы
+
+- [commit](.agents/skills/commit/SKILL.md) — подготовка сообщений и создание Git-коммитов по Conventional Commits с проверками Outgate.
+
+При использовании прочитайте `SKILL.md` и указанные в нём правила именования.
