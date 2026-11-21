@@ -1,0 +1,3707 @@
+openapi: 3.1.0
+info:
+  title: Outgate Admin API
+  version: '1'
+  description: |-
+    Контракт этапа 1. Admin API доступен на выделенном listener в management network. Production использует TLS 1.3, выделенный admin CA и индивидуальные CLI credentials либо BFF mTLS + JWT audience outgate-admin-api. Development bearer допустим только на loopback в явно выбранном development. Указанные security alternatives описывают разные профили установки. Браузер работает через BFF; его endpoints, публичные и service mTLS endpoints описываются отдельно.
+
+    Роли viewer, deployer и security_admin независимы. Для каждого действия сервер объединяет только bindings требуемой роли. Scope включает все затронутые ресурсы, в том числе обоих участников ACL и всех затронутых владельцев shared path. Для online операций security_admin обязательна проверенная MFA не старше 5 минут. У CLI JWT передаётся в X-Outgate-Admin-User-Assertion; у BFF проверяются claims JWT в Authorization. Полномочия определяются сервером. Скрытые данные исключаются из объектов, счётчиков, diff и курсоров. Для операций с x-outgate-role operation_actor повторно применяется роль и область исходной операции.
+
+    Для каждого вызова требуется X-Outgate-Admin-API-Version: 1. В JSON запрещены дубли ключей; неизвестные поля mutating JSON отклоняются. Сервер дополнительно проверяет UTF-8 byte limits, нормализацию путей, межполевые и runtime ограничения из ТЗ. Все ошибки до заголовков используют application/problem+json. Для сервисных ссылок в path требуется percent-encoding строковых значений как отдельных параметров.
+
+    Mutating вызовы используют UUIDv7 Idempotency-Key, expected_revision и reason. Для команд без тела обязательны If-Match и X-Outgate-Change-Reason; с JSON они опциональны и обязаны совпадать с телом. Сначала проверяются действующие права, затем committed key того же actor, endpoint, нормализованного payload и expected_revision, затем preview и текущая revision для новой команды. Preview привязан к actor, payload, точному scope и базовой revision, действует 10 минут и используется однократно. Несовпадения и просроченные keys дают 409. Запись состояния, новой revision, operation и audit outbox предшествует публикации и успешному ответу. При неизвестном результате commit следует найти запись или повторить запрос с тем же key. Повтор выдачи grant и поиск результата не возвращают секрет.
+
+    Значения credentials в примерах синтетические. Списки используют limit и opaque cursor. Порядок по ID, для операций и аудита по времени и ID. Курсор фиксирует фильтры, actor scope и snapshot_revision; действует 10 минут. Некорректный курсор или изменённые фильтры дают 400; истёкший курсор либо недоступный снимок дают 409. Чтение и анализ сохраняют state; preview хранит только данные подтверждения.
+
+    Требования к storage, BFF, runtime-проверкам и поддерживаемым режимам определяет ТЗ, включая разделы 3.9, 3.18–3.24, 3.26, 5.5.6 и 6.5.
+servers:
+- url: https://outgate-admin-api.example.net:9091
+  description: Пример изолированного Admin API listener.
+security:
+- AdminMTLS: []
+  CLIAdminToken: []
+- AdminMTLS: []
+  BFFAdminJWT: []
+- DevelopmentAdminToken: []
+paths:
+  /admin/status:
+    get:
+      operationId: getStatus
+      summary: Показать готовность слушателей и обязательных зависимостей
+      x-outgate-role: viewer
+      x-outgate-scope: Данные видимых сервисов и безопасные сводные статусы шлюза.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Status'
+              example:
+                observed_at: '2026-01-01T12:00:00Z'
+                ready: false
+                security_mode: production
+                listeners:
+                - name: admin
+                  state: ready
+                dependencies:
+                - name: replay
+                  state: recovering
+                quota: []
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/tunnels:
+    get:
+      operationId: listTunnels
+      summary: Показать зарегистрированные и дренируемые экземпляры
+      x-outgate-role: viewer
+      x-outgate-scope: Только экземпляры видимых сервисов.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Filter_service_id'
+      - $ref: '#/components/parameters/Filter_version'
+      - $ref: '#/components/parameters/Filter_transport'
+      - $ref: '#/components/parameters/Filter_tunnel_state'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TunnelPage'
+              example:
+                items:
+                - service_id: reports
+                  version: 1.0.0
+                  instance_id: reports-1
+                  transport: quic
+                  state: ready
+                  role: null
+                  paths: [/api/reports]
+                  path_mode: preserve
+                  rewrite_mount_headers: false
+                  connected_since: '2026-01-01T12:00:00Z'
+                  credential_expires_at: '2026-01-01T13:00:00Z'
+                  grant_id: AAAAAAAAAAAAAAAAAAAAAA
+                  certificate_serial: 71ab
+                  active_passive: null
+                next_cursor: null
+                snapshot_revision: '7'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/routes:
+    get:
+      operationId: listRoutes
+      summary: Показать владение, включая pending, недоступные и retired префиксы
+      x-outgate-role: viewer
+      x-outgate-scope: Только видимые владельцы префикса, экземпляры и frontend override.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Filter_service_id'
+      - $ref: '#/components/parameters/Filter_version'
+      - $ref: '#/components/parameters/Filter_transport'
+      - $ref: '#/components/parameters/Filter_route_state'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutePage'
+              example:
+                items:
+                - path: /api/reports
+                  owners:
+                  - service_id: reports
+                    state: active
+                    instances:
+                    - service_id: reports
+                      version: 1.0.0
+                      instance_id: reports-1
+                      transport: quic
+                      state: ready
+                      role: null
+                    active_passive: []
+                next_cursor: null
+                snapshot_revision: '7'
+                frontend_override:
+                  enabled: false
+                  service_id: null
+                  state: disabled
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/services/{service_id}/versions:
+    get:
+      operationId: listVersions
+      summary: Показать обнаруженные версии, в том числе версии без готовых экземпляров
+      x-outgate-role: viewer
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Filter_version'
+      - $ref: '#/components/parameters/Filter_transport'
+      - $ref: '#/components/parameters/Filter_version_state'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionPage'
+              example:
+                items:
+                - service_id: reports
+                  version: 1.0.0
+                  first_seen: '2026-01-01T12:00:00Z'
+                  last_seen: '2026-01-01T12:00:00Z'
+                  state: discovered
+                  active_instances: 1
+                  paths: [/api/reports]
+                  transports: [quic]
+                  instances:
+                  - service_id: reports
+                    version: 1.0.0
+                    instance_id: reports-1
+                    transport: quic
+                    state: ready
+                    role: null
+                next_cursor: null
+                snapshot_revision: '7'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/services/{service_id}/rollout:
+    get:
+      operationId: getRollout
+      summary: Прочитать текущую политику распределения с её ревизией
+      x-outgate-role: viewer
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rollout'
+              example:
+                stable_version: 1.0.0
+                canary_version: null
+                canary_percent: 0
+                previous_stable_version: null
+                updated_at: '2026-01-01T12:00:00Z'
+                revision: '7'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    put:
+      operationId: updateRollout
+      summary: Атомарно заменить stable, canary и процент
+      x-outgate-role: deployer
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Атомарно заменить stable, canary и процент. Canary 0% допустима при недоступной canary.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolloutUpdate'
+            example:
+              stable_version: 1.0.0
+              canary_version: null
+              canary_percent: 0
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rollout'
+              example:
+                stable_version: 1.0.0
+                canary_version: null
+                canary_percent: 0
+                previous_stable_version: null
+                updated_at: '2026-01-01T12:00:00Z'
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/services/{service_id}/rollout/promote:
+    post:
+      operationId: promoteRollout
+      summary: Продвинуть текущую canary и сохранить старую stable в previous_stable_version
+      x-outgate-role: deployer
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/ChangeReason'
+      description: Продвинуть текущую canary и сохранить старую stable в previous_stable_version. Без canary возвращается
+        409.
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rollout'
+              example:
+                stable_version: 1.1.0
+                canary_version: null
+                canary_percent: 0
+                previous_stable_version: 1.0.0
+                updated_at: '2026-01-01T12:00:00Z'
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/services/{service_id}/rollout/rollback:
+    post:
+      operationId: rollbackRollout
+      summary: Снять canary или восстановить доступную previous_stable_version по условиям ТЗ 3.5
+      x-outgate-role: deployer
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/ChangeReason'
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Rollout'
+              example:
+                stable_version: 1.0.0
+                canary_version: null
+                canary_percent: 0
+                previous_stable_version: null
+                updated_at: '2026-01-01T12:00:00Z'
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/services/{service_id}/versions/{version}/active-instance:
+    post:
+      operationId: switchPrimary
+      summary: Выбрать готовый primary из order этой active-passive версии с полным покрытием путей
+      x-outgate-role: deployer
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      - $ref: '#/components/parameters/VersionPath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ActiveInstanceUpdate'
+            example:
+              instance_id: reports-2
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveInstanceResult'
+              example:
+                service_id: reports
+                version: 1.0.0
+                revision: '8'
+                pool:
+                  instance_order: [reports-1, reports-2]
+                  primary_instance_id: reports-2
+                  last_switch_reason: manual
+                  last_switch_at: '2026-01-01T12:00:00Z'
+                  status: available
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/interservice-access:
+    get:
+      operationId: getInterserviceAccess
+      summary: Прочитать видимую проекцию политики и её базовую ревизию
+      x-outgate-role: viewer
+      x-outgate-scope: Явная scope_service_ids. Для каждой видимой пары caller/target требуется scope обоих сервисов.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessState'
+              example:
+                snapshot:
+                  policies: []
+                  internal_only: []
+                scope_service_ids: [reports]
+                revision: '7'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    put:
+      operationId: updateInterserviceAccess
+      summary: Применить видимую проекцию после подтверждения без удаления чужих правил
+      x-outgate-role: security_admin
+      x-outgate-scope: Явная scope_service_ids. Для каждой видимой пары caller/target требуется scope обоих сервисов.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Применить видимую проекцию после подтверждения без удаления чужих правил. Перепроверить свежую MFA и preview.
+        Сужение полномочий запускает переоценку соответствующих открытых потоков.
+      x-outgate-additional-roles: [viewer]
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessUpdate'
+            example:
+              candidate:
+                policies: []
+                internal_only: []
+              scope_service_ids: [reports]
+              preview_id: BBBBBBBBBBBBBBBBBBBBBA
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessState'
+              example:
+                snapshot:
+                  policies: []
+                  internal_only: []
+                scope_service_ids: [reports]
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/interservice-access/validate:
+    post:
+      operationId: validateInterserviceAccess
+      summary: Проверить черновик и выпустить preview на 10 минут
+      x-outgate-role: viewer
+      x-outgate-scope: Явная scope_service_ids. Для каждой видимой пары caller/target требуется scope обоих сервисов.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      description: Проверить черновик и выпустить preview на 10 минут. Ошибки полей возвращаются с 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessValidation'
+            example:
+              candidate:
+                policies: []
+                internal_only: []
+              scope_service_ids: [reports]
+              expected_revision: '7'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessPreview'
+              example:
+                preview_id: BBBBBBBBBBBBBBBBBBBBBA
+                expires_at: '2026-01-01T12:10:00Z'
+                revision: '7'
+                diff: []
+                potentially_closed_streams: '0'
+                valid: true
+                access_diff:
+                  policies_added: []
+                  policies_removed: []
+                  internal_only_added: []
+                  internal_only_removed: []
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/interservice-access/evaluate:
+    post:
+      operationId: evaluateInterserviceAccess
+      summary: Смоделировать доступ для caller, target, публичного пути, метода и типа контекста
+      x-outgate-role: viewer
+      x-outgate-scope: Viewer scope на caller и target; для черновика действуют те же границы видимости.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessEvaluation'
+            example:
+              caller: reports
+              target: inventory
+              path: /api/inventory
+              method: GET
+              context: background
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessDecision'
+              example:
+                decision: deny
+                reason: no_matching_rule
+                matching_rules: []
+                revision: '7'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/routes/activate:
+    post:
+      operationId: activateRoute
+      summary: Активировать префикс при действующем допуске и покрытии всех положительно взвешенных версий
+      x-outgate-role: deployer
+      x-outgate-scope: Сервис из запроса и все затронутые владельцы shared path.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteActivation'
+            example:
+              service_id: reports
+              path: /api/reports
+              deployment_grant_id: AAAAAAAAAAAAAAAAAAAAAA
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteChangeResult'
+              example:
+                service_id: reports
+                path: /api/reports
+                state: active
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/routes/retire:
+    post:
+      operationId: retireRoute
+      summary: Прекратить новые регистрации и назначения владельца, сохранив tombstone
+      x-outgate-role: deployer
+      x-outgate-scope: Сервис из запроса и все затронутые владельцы shared path.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Прекратить новые регистрации и назначения владельца, сохранив tombstone. Уже начатые потоки дренируются
+        до 30 секунд.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteRetirement'
+            example:
+              service_id: reports
+              path: /api/reports
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteChangeResult'
+              example:
+                service_id: reports
+                path: /api/reports
+                state: retired
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/routes/release:
+    post:
+      operationId: releaseRoute
+      summary: Освободить retired-префикс после дренирования и отзыва допускающих его grants
+      x-outgate-role: security_admin
+      x-outgate-scope: Сервис из запроса и все затронутые владельцы shared path.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Освободить retired-префикс после дренирования и отзыва допускающих его grants. Для корня применяется frontend
+        override.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RouteRelease'
+            example:
+              service_id: reports
+              path: /api/reports
+              scope_service_ids: [reports]
+              preview_id: BBBBBBBBBBBBBBBBBBBBBA
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouteChangeResult'
+              example:
+                service_id: reports
+                path: /api/reports
+                state: released
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/frontend-override:
+    put:
+      operationId: updateFrontendOverride
+      summary: Переключить backend для новых запросов после preview
+      x-outgate-role: security_admin
+      x-outgate-scope: Область текущего и нового назначения frontend.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Переключить backend для новых запросов после preview. Уже обслуживаемые соединения продолжаются.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FrontendUpdate'
+            example:
+              enabled: false
+              service_id: null
+              scope_service_ids: [reports]
+              preview_id: BBBBBBBBBBBBBBBBBBBBBA
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FrontendResult'
+              example:
+                frontend_override:
+                  enabled: false
+                  service_id: null
+                  state: disabled
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/changes/validate:
+    post:
+      operationId: validateChange
+      summary: Рассчитать последствия route release, frontend override или импорта конфигурации и выпустить одноразовый preview
+      x-outgate-role: security_admin
+      x-outgate-scope: Явная область полного набора затронутых сервисов. Для глобальных объектов требуется глобальный binding.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangeValidation'
+            example:
+              operation: route_release
+              candidate:
+                service_id: reports
+                path: /api/reports
+              expected_revision: '7'
+              scope_service_ids: [reports]
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Preview'
+              example:
+                preview_id: BBBBBBBBBBBBBBBBBBBBBA
+                expires_at: '2026-01-01T12:10:00Z'
+                revision: '7'
+                diff: []
+                potentially_closed_streams: '0'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/config/import:
+    post:
+      operationId: importConfig
+      summary: Явно импортировать кандидат control state
+      x-outgate-role: security_admin
+      x-outgate-scope: Явная область всех изменяемых объектов; глобальные объекты требуют глобального binding.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Явно импортировать кандидат control state. При изменении ACL/internal-only требуется также preview редактора
+        политики.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImportConfig'
+            example:
+              scope_service_ids: [reports]
+              config_yaml: |
+                services:
+                  reports:
+                    stable_version: '1.0.0'
+              preview_id: BBBBBBBBBBBBBBBBBBBBBA
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportResult'
+              example:
+                revision: '8'
+                diff: []
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/services/{service_id}/versions/{version}/retire:
+    post:
+      operationId: retireVersion
+      summary: Запретить регистрацию и включение версии
+      x-outgate-role: deployer
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      - $ref: '#/components/parameters/VersionPath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/ChangeReason'
+      description: Запретить регистрацию и включение версии. Вес, ссылки из rollout, сессии и grants проверяются до изменения.
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionMutation'
+              example:
+                service_id: reports
+                version: 1.0.0
+                state: retired
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/services/{service_id}/versions/{version}/restore:
+    post:
+      operationId: restoreVersion
+      summary: Снять запрет регистрации версии
+      x-outgate-role: security_admin
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      - $ref: '#/components/parameters/VersionPath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/ChangeReason'
+      description: Снять запрет регистрации версии. Допуск и активация маршрутов остаются отдельными операциями.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionMutation'
+              example:
+                service_id: reports
+                version: 1.0.0
+                state: discovered
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/services/{service_id}:
+    delete:
+      operationId: deleteService
+      summary: Окончательно удалить предварительно отозванную identity без действующих ссылок и сессий
+      x-outgate-role: security_admin
+      x-outgate-scope: Глобальный security_admin binding.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/ServicePath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/ChangeReason'
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteServiceResult'
+              example:
+                service_id: reports
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/history/purge/validate:
+    post:
+      operationId: validateHistoryPurge
+      summary: Оценить ограниченную очистку истории без удаления записей
+      x-outgate-role: security_admin
+      x-outgate-scope: Явная scope_service_ids; действуют минимумы retention и ограничения на защищённые записи.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurgeValidation'
+            example:
+              kind: audit
+              before: '2025-09-01T12:00:00Z'
+              scope_service_ids: [reports]
+              expected_revision: '7'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurgePlan'
+              example:
+                kind: audit
+                before: '2025-09-01T12:00:00Z'
+                eligible_count: '12'
+                revision: '7'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/history/purge:
+    post:
+      operationId: purgeHistory
+      summary: Очистить историю ограниченной партией с проверкой retention
+      x-outgate-role: security_admin
+      x-outgate-scope: Явная scope_service_ids; действуют минимумы retention и ограничения на защищённые записи.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Очистить историю ограниченной партией с проверкой retention. Tombstones, активное security state и неотправленный
+        outbox сохраняются.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurgeHistory'
+            example:
+              kind: audit
+              before: '2025-09-01T12:00:00Z'
+              scope_service_ids: [reports]
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurgeResult'
+              example:
+                kind: audit
+                before: '2025-09-01T12:00:00Z'
+                removed_count: '12'
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/secrets/reload:
+    post:
+      operationId: reloadSecrets
+      summary: Проверить источники и атомарно перечитать keyring и сертификаты
+      x-outgate-role: security_admin
+      x-outgate-scope: Глобальный security_admin binding.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/ChangeReason'
+      description: Проверить источники и атомарно перечитать keyring и сертификаты. Отзыв имеет приоритет над содержимым файла.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReloadResult'
+              example:
+                revision: '8'
+                reloaded_at: '2026-01-01T12:00:00Z'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/tunnels/{instance_id}:
+    delete:
+      operationId: disconnectTunnel
+      summary: Принудительно закрыть экземпляр и его текущие потоки
+      x-outgate-role: security_admin
+      x-outgate-scope: Сервис, которому принадлежит экземпляр.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/InstancePath'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatch'
+      - $ref: '#/components/parameters/ChangeReason'
+      description: Принудительно закрыть экземпляр и его текущие потоки. Для запрета новой регистрации используется отзыв.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DisconnectResult'
+              example:
+                service_id: reports
+                instance_id: reports-1
+                revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/deployment-grants:
+    get:
+      operationId: listDeploymentGrants
+      summary: Показать метаданные выданных grants для административной консоли
+      x-outgate-role: viewer
+      x-outgate-scope: Только grants видимых сервисов.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Filter_service_id'
+      - $ref: '#/components/parameters/Filter_version'
+      - $ref: '#/components/parameters/Filter_grant_state'
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantPage'
+              example:
+                items:
+                - service_id: reports
+                  instance_id: reports-1
+                  version: 1.0.0
+                  paths: [/api/reports]
+                  mounts:
+                    api: /api/reports
+                  path_mode: preserve
+                  rewrite_mount_headers: false
+                  spki_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                  artifact_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                  expires_at: '2026-01-01T13:00:00Z'
+                  grant_id: AAAAAAAAAAAAAAAAAAAAAA
+                  revision: '8'
+                  secret_available: false
+                  state: active
+                next_cursor: null
+                snapshot_revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    post:
+      operationId: issueDeploymentGrant
+      summary: Выдать ограниченный deployment grant для deployment principal
+      x-outgate-role: deployer
+      x-outgate-scope: Разрешённый сервис из path или тела запроса.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Выдать ограниченный deployment grant для deployment principal. BFF не может вызвать эту команду. Секрет
+        возвращается один раз, повтор возвращает безопасные метаданные.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IssueGrant'
+            example:
+              service_id: reports
+              instance_id: reports-1
+              version: 1.0.0
+              paths: [/api/reports]
+              mounts:
+                api: /api/reports
+              path_mode: preserve
+              rewrite_mount_headers: false
+              spki_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+              artifact_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+              expires_at: '2026-01-01T13:00:00Z'
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantResponse'
+              examples:
+                first:
+                  value:
+                    service_id: reports
+                    instance_id: reports-1
+                    version: 1.0.0
+                    paths: [/api/reports]
+                    mounts:
+                      api: /api/reports
+                    path_mode: preserve
+                    rewrite_mount_headers: false
+                    spki_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                    artifact_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                    expires_at: '2026-01-01T13:00:00Z'
+                    grant_id: AAAAAAAAAAAAAAAAAAAAAA
+                    revision: '8'
+                    secret_available: true
+                    deployment_grant: AAAAAAAAAAAAAAAAAAAAAA.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+                repeat:
+                  value:
+                    service_id: reports
+                    instance_id: reports-1
+                    version: 1.0.0
+                    paths: [/api/reports]
+                    mounts:
+                      api: /api/reports
+                    path_mode: preserve
+                    rewrite_mount_headers: false
+                    spki_sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                    artifact_digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+                    expires_at: '2026-01-01T13:00:00Z'
+                    grant_id: AAAAAAAAAAAAAAAAAAAAAA
+                    revision: '8'
+                    secret_available: false
+          headers:
+            Cache-Control:
+              required: true
+              schema:
+                const: no-store
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/revocations:
+    post:
+      operationId: revokeCredential
+      summary: Зафиксировать отзыв service identity, SPKI, certificate serial, grant либо HMAC key
+      x-outgate-role: security_admin
+      x-outgate-scope: Область отзываемого сервиса или ключа.
+      x-outgate-mutating: true
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - $ref: '#/components/parameters/IfMatchIfPresent'
+      - $ref: '#/components/parameters/ChangeReasonIfPresent'
+      description: Зафиксировать отзыв service identity, SPKI, certificate serial, grant либо HMAC key. Отзыв применяется
+        к затронутым потокам в пределах 5 секунд.
+      security:
+      - AdminMTLS: []
+        CLIAdminToken: []
+        CLIAdminAssertion: []
+      - AdminMTLS: []
+        BFFAdminJWT: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevokeCredential'
+            example:
+              target:
+                kind: grant_id
+                service_id: reports
+                value: AAAAAAAAAAAAAAAAAAAAAA
+              expected_revision: '7'
+              reason: deploy
+      responses:
+        '200':
+          description: Команда применена либо возвращён ранее зафиксированный результат.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevocationResult'
+              example:
+                target:
+                  kind: grant_id
+                  service_id: reports
+                  value: AAAAAAAAAAAAAAAAAAAAAA
+                cursor: '9'
+                revision: '8'
+                revoked_at: '2026-01-01T12:00:00Z'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/audit:
+    get:
+      operationId: listAudit
+      summary: Прочитать безопасные события аудита по времени и ID
+      x-outgate-role: viewer
+      x-outgate-scope: Полный scope всех сервисов события; глобальные события требуют глобального просмотра.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Filter_service_id'
+      - $ref: '#/components/parameters/Filter_audit_state'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditPage'
+              example:
+                items:
+                - event_id: '10'
+                  occurred_at: '2026-01-01T12:00:00Z'
+                  actor: release-operator
+                  request_id: admin-example
+                  service_ids: [reports]
+                  operation: updateRollout
+                  operation_id: 019b76da-ae00-7000-8000-000000000001
+                  outcome: committed
+                  reason: deploy
+                  previous_revision: '7'
+                  revision: '8'
+                  diff: []
+                next_cursor: null
+                snapshot_revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/operations:
+    get:
+      operationId: listOperations
+      summary: Просмотреть безопасные записи собственных операций по времени и ID
+      x-outgate-role: viewer
+      x-outgate-scope: Тот же actor и текущее покрытие service scope операции. Чужой результат скрыт.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/Limit'
+      - $ref: '#/components/parameters/Cursor'
+      - $ref: '#/components/parameters/Filter_service_id'
+      - $ref: '#/components/parameters/Filter_operation_state'
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationPage'
+              example:
+                items:
+                - operation_id: 019b76da-ae00-7000-8000-000000000001
+                  committed_at: '2026-01-01T12:00:00Z'
+                  service_ids: [reports]
+                  operation: updateRollout
+                  state: committed
+                  revision: '8'
+                next_cursor: null
+                snapshot_revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /admin/operations/{operation_id}:
+    get:
+      operationId: getOperation
+      summary: Найти зафиксированный результат по Idempotency-Key
+      x-outgate-role: operation_actor
+      x-outgate-scope: Тот же actor и текущее покрытие service scope операции. Чужой результат скрыт.
+      x-outgate-mutating: false
+      parameters:
+      - $ref: '#/components/parameters/APIVersion'
+      - $ref: '#/components/parameters/OperationPath'
+      description: Найти зафиксированный результат по Idempotency-Key. Повторно проверяются права исходной операции. При отсутствии
+        доступного результата возвращается 404 unknown.
+      responses:
+        '200':
+          description: Успешный ответ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OperationResult'
+              example:
+                operation_id: 019b76da-ae00-7000-8000-000000000001
+                committed_at: '2026-01-01T12:00:00Z'
+                service_ids: [reports]
+                operation: updateRollout
+                state: committed
+                revision: '8'
+                result:
+                  stable_version: 1.0.0
+                  canary_version: null
+                  canary_percent: 0
+                  previous_stable_version: null
+                  updated_at: '2026-01-01T12:00:00Z'
+                  revision: '8'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+components:
+  securitySchemes:
+    AdminMTLS:
+      type: mutualTLS
+      description: Production admin CA. CLI и BFF certificate identity имеют отдельные полномочия.
+    CLIAdminToken:
+      type: http
+      scheme: bearer
+      description: Индивидуальный CLI admin token в паре с CLI mTLS.
+    BFFAdminJWT:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Только BFF delegation certificate и admin access JWT пользователя от настроенного issuer.
+    CLIAdminAssertion:
+      type: apiKey
+      in: header
+      name: X-Outgate-Admin-User-Assertion
+      description: Обязателен для production CLI с ролью security_admin. Секретный admin JWT, привязанный к user_subject CLI
+        principal. Для BFF проверяется admin JWT из Authorization.
+    DevelopmentAdminToken:
+      type: http
+      scheme: bearer
+      description: Отдельный admin bearer, только development loopback.
+  parameters:
+    APIVersion:
+      name: X-Outgate-Admin-API-Version
+      in: header
+      required: true
+      schema:
+        type: string
+        const: '1'
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        $ref: '#/components/schemas/OperationID'
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        pattern: ^"(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)"$(?![\s\S])
+      description: Ровно одна ревизия в кавычках. При передаче JSON заголовок, если указан, должен совпадать с expected_revision.
+      example: '"7"'
+    ChangeReason:
+      name: X-Outgate-Change-Reason
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 2
+        maxLength: 683
+        pattern: ^[A-Za-z0-9_-]+$(?![\s\S])
+      description: Base64url без padding от UTF-8 reason длиной 1–512 байт. При передаче JSON декодированное значение должно
+        совпадать с reason.
+      example: ZGVwbG95
+    IfMatchIfPresent:
+      name: If-Match
+      in: header
+      required: false
+      schema:
+        type: string
+        pattern: ^"(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)"$(?![\s\S])
+      description: Ровно одна ревизия в кавычках. При передаче JSON заголовок, если указан, должен совпадать с expected_revision.
+      example: '"7"'
+    ChangeReasonIfPresent:
+      name: X-Outgate-Change-Reason
+      in: header
+      required: false
+      schema:
+        type: string
+        minLength: 2
+        maxLength: 683
+        pattern: ^[A-Za-z0-9_-]+$(?![\s\S])
+      description: Base64url без padding от UTF-8 reason длиной 1–512 байт. При передаче JSON декодированное значение должно
+        совпадать с reason.
+      example: ZGVwbG95
+    ServicePath:
+      name: service_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ServiceID'
+    VersionPath:
+      name: version
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/Version'
+    InstancePath:
+      name: instance_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/ID'
+    OperationPath:
+      name: operation_id
+      in: path
+      required: true
+      schema:
+        $ref: '#/components/schemas/OperationID'
+    Limit:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Cursor'
+    Filter_service_id:
+      name: service_id
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/ServiceID'
+    Filter_version:
+      name: version
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Version'
+    Filter_transport:
+      name: transport
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/Transport'
+    Filter_route_state:
+      name: state
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/RouteState'
+    Filter_tunnel_state:
+      name: state
+      in: query
+      required: false
+      schema:
+        $ref: '#/components/schemas/TunnelState'
+    Filter_version_state:
+      name: state
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [discovered, retired]
+    Filter_grant_state:
+      name: state
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [active, expired, revoked]
+    Filter_audit_state:
+      name: state
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [committed, rejected]
+    Filter_operation_state:
+      name: state
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [committed]
+  responses:
+    InvalidRequest:
+      description: Отсутствует или не поддерживается версия Admin API, некорректны параметры, JSON или timestamp нового operation
+        key.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Problem'
+            - properties:
+                status:
+                  const: 400
+                code:
+                  type: string
+                  enum: [unsupported_admin_api_version, invalid_request, invalid_cursor, invalid_operation_key, invalid_snapshot]
+                reason:
+                  type: string
+                  enum: [unsupported_admin_api_version, invalid_request, invalid_cursor, invalid_operation_key, invalid_snapshot]
+          example:
+            type: urn:outgate:problem:unsupported_admin_api_version
+            title: InvalidRequest
+            status: 400
+            detail: Отсутствует или не поддерживается версия Admin API, некорректны параметры, JSON или timestamp нового operation
+              key.
+            instance: urn:outgate:request:admin-example
+            code: unsupported_admin_api_version
+            reason: unsupported_admin_api_version
+            request_id: admin-example
+    Unauthorized:
+      description: Отсутствуют или недействительны credentials. Отказ mTLS может произойти до HTTP.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Problem'
+            - properties:
+                status:
+                  const: 401
+                code:
+                  type: string
+                  enum: [unauthenticated]
+                reason:
+                  type: string
+                  enum: [unauthenticated]
+          example:
+            type: urn:outgate:problem:unauthenticated
+            title: Unauthorized
+            status: 401
+            detail: Отсутствуют или недействительны credentials. Отказ mTLS может произойти до HTTP.
+            instance: urn:outgate:request:admin-example
+            code: unauthenticated
+            reason: unauthenticated
+            request_id: admin-example
+    Forbidden:
+      description: Требуемая роль, область или свежая MFA недоступны.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Problem'
+            - properties:
+                status:
+                  const: 403
+                code:
+                  type: string
+                  enum: [forbidden, fresh_mfa_required]
+                reason:
+                  type: string
+                  enum: [forbidden, fresh_mfa_required]
+          example:
+            type: urn:outgate:problem:forbidden
+            title: Forbidden
+            status: 403
+            detail: Требуемая роль, область или свежая MFA недоступны.
+            instance: urn:outgate:request:admin-example
+            code: forbidden
+            reason: forbidden
+            request_id: admin-example
+    NotFound:
+      description: Объект отсутствует или скрыт в области проверяющего actor. Для поиска неизвестной операции используется
+        unknown.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Problem'
+            - properties:
+                status:
+                  const: 404
+                code:
+                  type: string
+                  enum: [not_found, unknown]
+                reason:
+                  type: string
+                  enum: [not_found, unknown]
+          example:
+            type: urn:outgate:problem:not_found
+            title: NotFound
+            status: 404
+            detail: Объект отсутствует или скрыт в области проверяющего actor. Для поиска неизвестной операции используется
+              unknown.
+            instance: urn:outgate:request:admin-example
+            code: not_found
+            reason: not_found
+            request_id: admin-example
+    Conflict:
+      description: Устарела revision, preview или страница; key просрочен или уже привязан к другой операции; условия изменения
+        не выполнены.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Problem'
+            - properties:
+                status:
+                  const: 409
+                code:
+                  type: string
+                  enum: [revision_conflict, operation_conflict, operation_key_expired, preview_conflict, snapshot_expired,
+                    state_conflict]
+                reason:
+                  type: string
+                  enum: [revision_conflict, operation_conflict, operation_key_expired, preview_conflict, snapshot_expired,
+                    state_conflict]
+          example:
+            type: urn:outgate:problem:revision_conflict
+            title: Conflict
+            status: 409
+            detail: Устарела revision, preview или страница; key просрочен или уже привязан к другой операции; условия изменения
+              не выполнены.
+            instance: urn:outgate:request:admin-example
+            code: revision_conflict
+            reason: revision_conflict
+            request_id: admin-example
+    UnsupportedMediaType:
+      description: Этот метод требует application/json для тела запроса.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Problem'
+            - properties:
+                status:
+                  const: 415
+                code:
+                  type: string
+                  enum: [unsupported_media_type]
+                reason:
+                  type: string
+                  enum: [unsupported_media_type]
+          example:
+            type: urn:outgate:problem:unsupported_media_type
+            title: UnsupportedMediaType
+            status: 415
+            detail: Этот метод требует application/json для тела запроса.
+            instance: urn:outgate:request:admin-example
+            code: unsupported_media_type
+            reason: unsupported_media_type
+            request_id: admin-example
+    RateLimited:
+      description: Достигнут лимит запросов Admin API.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Problem'
+            - properties:
+                status:
+                  const: 429
+                code:
+                  type: string
+                  enum: [rate_limited]
+                reason:
+                  type: string
+                  enum: [rate_limited]
+          example:
+            type: urn:outgate:problem:rate_limited
+            title: RateLimited
+            status: 429
+            detail: Достигнут лимит запросов Admin API.
+            instance: urn:outgate:request:admin-example
+            code: rate_limited
+            reason: rate_limited
+            request_id: admin-example
+      headers:
+        Retry-After:
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+    Unavailable:
+      description: Обязательное состояние или локальная очередь аудита недоступны либо результат commit неизвестен.
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+            - $ref: '#/components/schemas/Problem'
+            - properties:
+                status:
+                  const: 503
+                code:
+                  type: string
+                  enum: [state_unavailable, audit_unavailable, operation_outcome_unknown]
+                reason:
+                  type: string
+                  enum: [state_unavailable, audit_unavailable, operation_outcome_unknown]
+          example:
+            type: urn:outgate:problem:state_unavailable
+            title: Unavailable
+            status: 503
+            detail: Обязательное состояние или локальная очередь аудита недоступны либо результат commit неизвестен.
+            instance: urn:outgate:request:admin-example
+            code: state_unavailable
+            reason: state_unavailable
+            request_id: admin-example
+  schemas:
+    Revision:
+      type: string
+      minLength: 1
+      maxLength: 20
+      pattern: ^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$(?![\s\S])
+    Timestamp:
+      type: string
+      format: date-time
+    ID:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$(?![\s\S])
+    ServiceID:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$(?![\s\S])
+    Version:
+      type: string
+      minLength: 1
+      maxLength: 128
+      pattern: ^(?=.*\S)[^\u0000-\u001f\u007f-\u009f]+$(?![\s\S])
+      description: Непустой ID сборки. Сервер также проверяет предел 128 байт UTF-8 и отсутствие управляющих символов.
+    Prefix:
+      type: string
+      minLength: 1
+      maxLength: 8192
+      pattern: ^(?!.*//)(?!.*[/]\.{1,2}(?:/|$))/[^\s%?#\\\u0000-\u001f\u007f-\u009f]*$(?![\s\S])
+      description: Публичный префикс по ТЗ 3.3. Сервер проверяет байтовый лимит, нормализует завершающий слеш, проверяет допустимость
+        корня и совпадение по границе сегмента.
+    Transport:
+      type: string
+      enum: [quic, wss]
+    PathMode:
+      type: string
+      enum: [preserve, strip]
+    InstanceRole:
+      type: string
+      enum: [primary, standby, unavailable]
+    TunnelState:
+      type: string
+      enum: [registered, ready, draining]
+    RouteState:
+      type: string
+      enum: [pending, active, retired]
+    FrontendState:
+      type: string
+      enum: [disabled, awaiting_registration, active, unavailable]
+    RolloutStatus:
+      type: string
+      enum: [available, degraded, no_ready_replica]
+    SwitchReason:
+      type: string
+      enum: [disconnect, not_ready, drain, revoked, manual, preempt]
+    Reason:
+      type: string
+      minLength: 1
+      maxLength: 512
+      pattern: \S
+      description: Непустая причина. Сервер проверяет длину 1–512 байт UTF-8.
+    OperationID:
+      type: string
+      minLength: 36
+      maxLength: 36
+      pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$(?![\s\S])
+      description: Каноническая запись UUIDv7. Сервер проверяет возраст не более 30 дней и допуск будущего времени 30 секунд.
+    PreviewID:
+      type: string
+      minLength: 1
+      maxLength: 256
+      pattern: ^[A-Za-z0-9_-]+$(?![\s\S])
+    Cursor:
+      type: string
+      minLength: 1
+      maxLength: 2048
+      pattern: ^[A-Za-z0-9_-]+$(?![\s\S])
+    GrantID:
+      type: string
+      minLength: 22
+      maxLength: 128
+      pattern: ^[A-Za-z0-9_-]+$(?![\s\S])
+    SHA256:
+      type: string
+      minLength: 64
+      maxLength: 64
+      pattern: ^[0-9a-f]{64}$(?![\s\S])
+    Method:
+      type: string
+      minLength: 1
+      maxLength: 64
+      pattern: ^[!#$%&'+.^_`|~A-Za-z0-9-]+$(?![\s\S])
+    ServiceScope:
+      oneOf:
+      - type: array
+        items:
+          $ref: '#/components/schemas/ServiceID'
+        minItems: 1
+        uniqueItems: true
+      - const: ['*']
+      description: Явные service IDs либо единственный *. Значение * доступно только глобальному binding соответствующей роли.
+    Bool:
+      type: boolean
+    ProblemCode:
+      type: string
+      enum: [unsupported_admin_api_version, invalid_request, invalid_cursor, invalid_operation_key, invalid_snapshot, unauthenticated,
+        forbidden, fresh_mfa_required, not_found, unknown, revision_conflict, operation_conflict, operation_key_expired, preview_conflict,
+        snapshot_expired, state_conflict, unsupported_media_type, rate_limited, state_unavailable, audit_unavailable, operation_outcome_unknown]
+    FieldError:
+      type: object
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+          minLength: 1
+          maxLength: 512
+        code:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9_]*$(?![\s\S])
+      required: [field, code]
+    Problem:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          minLength: 1
+        instance:
+          type: string
+          minLength: 1
+          pattern: ^urn:outgate:request:[A-Za-z0-9._~-]{1,128}$(?![\s\S])
+        code:
+          $ref: '#/components/schemas/ProblemCode'
+        reason:
+          $ref: '#/components/schemas/ProblemCode'
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z0-9._~-]+$(?![\s\S])
+        errors:
+          type: array
+          items:
+            $ref: '#/components/schemas/FieldError'
+          minItems: 1
+      required: [type, title, status, detail, instance, code, reason, request_id]
+      description: RFC 9457. reason всегда равен code; instance включает тот же request_id. Detail, errors и другие поля содержат
+        только безопасные данные.
+    InstanceRef:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        version:
+          $ref: '#/components/schemas/Version'
+        instance_id:
+          $ref: '#/components/schemas/ID'
+        transport:
+          $ref: '#/components/schemas/Transport'
+        state:
+          $ref: '#/components/schemas/TunnelState'
+        role:
+          anyOf:
+          - $ref: '#/components/schemas/InstanceRole'
+          - type: 'null'
+      required: [service_id, version, instance_id, transport, state, role]
+    ActivePassive:
+      type: object
+      additionalProperties: false
+      properties:
+        instance_order:
+          type: array
+          items:
+            $ref: '#/components/schemas/ID'
+          minItems: 1
+          uniqueItems: true
+        primary_instance_id:
+          anyOf:
+          - $ref: '#/components/schemas/ID'
+          - type: 'null'
+        last_switch_reason:
+          anyOf:
+          - $ref: '#/components/schemas/SwitchReason'
+          - type: 'null'
+        last_switch_at:
+          anyOf:
+          - $ref: '#/components/schemas/Timestamp'
+          - type: 'null'
+        status:
+          $ref: '#/components/schemas/RolloutStatus'
+      required: [instance_order, primary_instance_id, last_switch_reason, last_switch_at, status]
+    FrontendOverride:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          $ref: '#/components/schemas/Bool'
+        service_id:
+          anyOf:
+          - $ref: '#/components/schemas/ServiceID'
+          - type: 'null'
+        state:
+          $ref: '#/components/schemas/FrontendState'
+      required: [enabled, service_id, state]
+    Tunnel:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        version:
+          $ref: '#/components/schemas/Version'
+        instance_id:
+          $ref: '#/components/schemas/ID'
+        transport:
+          $ref: '#/components/schemas/Transport'
+        state:
+          $ref: '#/components/schemas/TunnelState'
+        role:
+          anyOf:
+          - $ref: '#/components/schemas/InstanceRole'
+          - type: 'null'
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/Prefix'
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+        path_mode:
+          $ref: '#/components/schemas/PathMode'
+        rewrite_mount_headers:
+          $ref: '#/components/schemas/Bool'
+        connected_since:
+          $ref: '#/components/schemas/Timestamp'
+        credential_expires_at:
+          anyOf:
+          - $ref: '#/components/schemas/Timestamp'
+          - type: 'null'
+        grant_id:
+          anyOf:
+          - $ref: '#/components/schemas/GrantID'
+          - type: 'null'
+        certificate_serial:
+          type: [string, 'null']
+        active_passive:
+          anyOf:
+          - $ref: '#/components/schemas/ActivePassive'
+          - type: 'null'
+      required: [service_id, version, instance_id, transport, state, role, paths, path_mode, rewrite_mount_headers, connected_since,
+        credential_expires_at, grant_id, certificate_serial, active_passive]
+    RouteOwner:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        state:
+          $ref: '#/components/schemas/RouteState'
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceRef'
+        active_passive:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              version:
+                $ref: '#/components/schemas/Version'
+              pool:
+                $ref: '#/components/schemas/ActivePassive'
+            required: [version, pool]
+      required: [service_id, state, instances, active_passive]
+    Route:
+      type: object
+      additionalProperties: false
+      properties:
+        path:
+          $ref: '#/components/schemas/Prefix'
+        owners:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteOwner'
+          minItems: 1
+      required: [path, owners]
+    ServiceVersion:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        version:
+          $ref: '#/components/schemas/Version'
+        first_seen:
+          $ref: '#/components/schemas/Timestamp'
+        last_seen:
+          $ref: '#/components/schemas/Timestamp'
+        state:
+          type: string
+          enum: [discovered, retired]
+        active_instances:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/Prefix'
+          uniqueItems: true
+        transports:
+          type: array
+          items:
+            $ref: '#/components/schemas/Transport'
+          maxItems: 2
+          uniqueItems: true
+        instances:
+          type: array
+          items:
+            $ref: '#/components/schemas/InstanceRef'
+      required: [service_id, version, first_seen, last_seen, state, active_instances, paths, transports, instances]
+    RolloutUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        stable_version:
+          $ref: '#/components/schemas/Version'
+        canary_version:
+          anyOf:
+          - $ref: '#/components/schemas/Version'
+          - type: 'null'
+        canary_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [stable_version, canary_version, canary_percent, expected_revision, reason]
+      if:
+        properties:
+          canary_version:
+            type: 'null'
+      then:
+        properties:
+          canary_percent:
+            const: 0
+      description: Stable и canary различаются. Сервер проверяет покрытие путей, mount bindings и active-passive order для
+        включаемых версий.
+    Rollout:
+      type: object
+      additionalProperties: false
+      properties:
+        stable_version:
+          $ref: '#/components/schemas/Version'
+        canary_version:
+          anyOf:
+          - $ref: '#/components/schemas/Version'
+          - type: 'null'
+        canary_percent:
+          type: integer
+          minimum: 0
+          maximum: 100
+        previous_stable_version:
+          anyOf:
+          - $ref: '#/components/schemas/Version'
+          - type: 'null'
+        updated_at:
+          $ref: '#/components/schemas/Timestamp'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [stable_version, canary_version, canary_percent, previous_stable_version, updated_at, revision]
+      if:
+        properties:
+          canary_version:
+            type: 'null'
+      then:
+        properties:
+          canary_percent:
+            const: 0
+    Status:
+      type: object
+      additionalProperties: false
+      properties:
+        observed_at:
+          $ref: '#/components/schemas/Timestamp'
+        ready:
+          $ref: '#/components/schemas/Bool'
+        security_mode:
+          type: string
+          enum: [production, development]
+        listeners:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+                enum: [public, quic, wss, interservice, admin, observability]
+              state:
+                type: string
+                enum: [ready, unavailable, disabled]
+            required: [name, state]
+        dependencies:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              name:
+                type: string
+                enum: [control, replay, revocations, identity, audit]
+              state:
+                type: string
+                enum: [ready, unavailable, recovering, disabled]
+            required: [name, state]
+        quota:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            properties:
+              name:
+                $ref: '#/components/schemas/ID'
+              used:
+                $ref: '#/components/schemas/Revision'
+              limit:
+                $ref: '#/components/schemas/Revision'
+            required: [name, used, limit]
+      required: [observed_at, ready, security_mode, listeners, dependencies, quota]
+      description: Доступен в recovery авторизованным читателям. Возвращает безопасную диагностику с учётом области просмотра.
+    AccessPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        caller:
+          $ref: '#/components/schemas/ServiceID'
+        target:
+          $ref: '#/components/schemas/ServiceID'
+        paths:
+          type: array
+          items:
+            allOf:
+            - $ref: '#/components/schemas/Prefix'
+            - not:
+                const: /
+          minItems: 1
+          uniqueItems: true
+        methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/Method'
+          minItems: 1
+          uniqueItems: true
+        allow_user_context:
+          $ref: '#/components/schemas/Bool'
+        allow_background:
+          $ref: '#/components/schemas/Bool'
+      required: [caller, target, paths, methods, allow_user_context, allow_background]
+    InternalOnly:
+      type: object
+      additionalProperties: false
+      properties:
+        target:
+          $ref: '#/components/schemas/ServiceID'
+        paths:
+          type: array
+          items:
+            allOf:
+            - $ref: '#/components/schemas/Prefix'
+            - not:
+                const: /
+          minItems: 1
+          uniqueItems: true
+        methods:
+          type: array
+          items:
+            $ref: '#/components/schemas/Method'
+          minItems: 1
+          uniqueItems: true
+        callers:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceID'
+          minItems: 1
+          uniqueItems: true
+      required: [target, paths, methods, callers]
+    AccessSnapshot:
+      type: object
+      additionalProperties: false
+      properties:
+        policies:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessPolicy'
+          uniqueItems: true
+        internal_only:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternalOnly'
+          uniqueItems: true
+      required: [policies, internal_only]
+    AccessState:
+      type: object
+      additionalProperties: false
+      properties:
+        snapshot:
+          $ref: '#/components/schemas/AccessSnapshot'
+        scope_service_ids:
+          $ref: '#/components/schemas/ServiceScope'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [snapshot, scope_service_ids, revision]
+    AccessValidation:
+      type: object
+      additionalProperties: false
+      properties:
+        candidate:
+          $ref: '#/components/schemas/AccessSnapshot'
+        scope_service_ids:
+          $ref: '#/components/schemas/ServiceScope'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+      required: [candidate, scope_service_ids, expected_revision]
+    AccessUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        candidate:
+          $ref: '#/components/schemas/AccessSnapshot'
+        scope_service_ids:
+          $ref: '#/components/schemas/ServiceScope'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        preview_id:
+          $ref: '#/components/schemas/PreviewID'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [candidate, scope_service_ids, expected_revision, preview_id, reason]
+    AccessEvaluation:
+      type: object
+      additionalProperties: false
+      properties:
+        caller:
+          $ref: '#/components/schemas/ServiceID'
+        target:
+          $ref: '#/components/schemas/ServiceID'
+        path:
+          $ref: '#/components/schemas/Prefix'
+        method:
+          $ref: '#/components/schemas/Method'
+        context:
+          type: string
+          enum: [background, user]
+        candidate:
+          $ref: '#/components/schemas/AccessSnapshot'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+      required: [caller, target, path, method, context]
+      dependentRequired:
+        candidate: [expected_revision]
+      description: Если candidate отсутствует, анализируется текущая видимая проекция. При candidate моделируется черновик
+        для указанной base revision.
+    AccessDecision:
+      type: object
+      additionalProperties: false
+      properties:
+        decision:
+          type: string
+          enum: [allow, deny]
+        reason:
+          type: string
+          enum: [allowed, no_matching_rule, context_forbidden, internal_only]
+        matching_rules:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessPolicy'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [decision, reason, matching_rules, revision]
+      description: Модель доступа для заданных условий. Полномочия JWT, credentials и состояние экземпляра определяются при
+        реальном запросе.
+    AccessDelta:
+      type: object
+      additionalProperties: false
+      properties:
+        policies_added:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessPolicy'
+        policies_removed:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccessPolicy'
+        internal_only_added:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternalOnly'
+        internal_only_removed:
+          type: array
+          items:
+            $ref: '#/components/schemas/InternalOnly'
+      required: [policies_added, policies_removed, internal_only_added, internal_only_removed]
+    SafeChange:
+      type: object
+      additionalProperties: false
+      properties:
+        resource:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[a-z][a-z0-9_]*$(?![\s\S])
+        service_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceID'
+          uniqueItems: true
+        action:
+          type: string
+          enum: [add, update, remove]
+        summary:
+          type: string
+          minLength: 1
+          maxLength: 512
+      required: [resource, service_ids, action, summary]
+      description: Санитизированное описание, сформированное сервером. Секреты, полные JWT и подписи, DSN и сырые конфиги
+        исключаются.
+    Preview:
+      type: object
+      additionalProperties: false
+      properties:
+        preview_id:
+          $ref: '#/components/schemas/PreviewID'
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        revision:
+          $ref: '#/components/schemas/Revision'
+        diff:
+          type: array
+          items:
+            $ref: '#/components/schemas/SafeChange'
+        potentially_closed_streams:
+          $ref: '#/components/schemas/Revision'
+      required: [preview_id, expires_at, revision, diff, potentially_closed_streams]
+    AccessPreview:
+      type: object
+      additionalProperties: false
+      properties:
+        preview_id:
+          $ref: '#/components/schemas/PreviewID'
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        revision:
+          $ref: '#/components/schemas/Revision'
+        diff:
+          type: array
+          items:
+            $ref: '#/components/schemas/SafeChange'
+        potentially_closed_streams:
+          $ref: '#/components/schemas/Revision'
+        valid:
+          const: true
+        access_diff:
+          $ref: '#/components/schemas/AccessDelta'
+      required: [preview_id, expires_at, revision, diff, potentially_closed_streams, valid, access_diff]
+    RouteActivation:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        path:
+          $ref: '#/components/schemas/Prefix'
+        deployment_grant_id:
+          $ref: '#/components/schemas/GrantID'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [service_id, path, deployment_grant_id, expected_revision, reason]
+      description: Активирует один зарезервированный префикс. Для корня требует настройки назначенного frontend и согласованной
+        активации override.
+    RouteRetirement:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        path:
+          allOf:
+          - $ref: '#/components/schemas/Prefix'
+          - not:
+              const: /
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [service_id, path, expected_revision, reason]
+    RouteRelease:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        path:
+          allOf:
+          - $ref: '#/components/schemas/Prefix'
+          - not:
+              const: /
+        scope_service_ids:
+          $ref: '#/components/schemas/ServiceScope'
+        preview_id:
+          $ref: '#/components/schemas/PreviewID'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [service_id, path, scope_service_ids, preview_id, expected_revision, reason]
+    RouteChangeResult:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        path:
+          $ref: '#/components/schemas/Prefix'
+        state:
+          type: string
+          enum: [active, retired, released]
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [service_id, path, state, revision]
+    ActiveInstanceUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        instance_id:
+          $ref: '#/components/schemas/ID'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [instance_id, expected_revision, reason]
+    ActiveInstanceResult:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        version:
+          $ref: '#/components/schemas/Version'
+        pool:
+          $ref: '#/components/schemas/ActivePassive'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [service_id, version, pool, revision]
+    FrontendUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        enabled:
+          $ref: '#/components/schemas/Bool'
+        service_id:
+          anyOf:
+          - $ref: '#/components/schemas/ServiceID'
+          - type: 'null'
+        scope_service_ids:
+          $ref: '#/components/schemas/ServiceScope'
+        preview_id:
+          $ref: '#/components/schemas/PreviewID'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [enabled, service_id, scope_service_ids, preview_id, expected_revision, reason]
+      if:
+        properties:
+          enabled:
+            const: true
+      then:
+        properties:
+          service_id:
+            $ref: '#/components/schemas/ServiceID'
+    FrontendResult:
+      type: object
+      additionalProperties: false
+      properties:
+        frontend_override:
+          $ref: '#/components/schemas/FrontendOverride'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [frontend_override, revision]
+    ImportConfig:
+      type: object
+      additionalProperties: false
+      properties:
+        config_yaml:
+          type: string
+          minLength: 1
+          maxLength: 1048576
+          description: YAML-кандидат конфигурации. Сервер проверяет его schema, дубликаты и фактически меняемые объекты; действуют
+            правила явного импорта из ТЗ 3.20, 3.24 и 5.5.6. Секреты передаются ссылками на защищённые источники.
+        scope_service_ids:
+          $ref: '#/components/schemas/ServiceScope'
+        preview_id:
+          $ref: '#/components/schemas/PreviewID'
+        access_preview_id:
+          $ref: '#/components/schemas/PreviewID'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [config_yaml, scope_service_ids, preview_id, expected_revision, reason]
+      description: access_preview_id обязателен, когда импорт изменяет межсервисную политику. Этот preview выпускает POST
+        /admin/interservice-access/validate и связывает извлечённый candidate access snapshot с actor, scope и базовой revision.
+    ImportResult:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          $ref: '#/components/schemas/Revision'
+        diff:
+          type: array
+          items:
+            $ref: '#/components/schemas/SafeChange'
+      required: [revision, diff]
+    VersionMutation:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        version:
+          $ref: '#/components/schemas/Version'
+        state:
+          type: string
+          enum: [discovered, retired]
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [service_id, version, state, revision]
+    DeleteServiceResult:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [service_id, revision]
+    PurgeValidation:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [operations, audit, retired_version_history, instance_history]
+        before:
+          $ref: '#/components/schemas/Timestamp'
+        scope_service_ids:
+          $ref: '#/components/schemas/ServiceScope'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+      required: [kind, before, scope_service_ids, expected_revision]
+    PurgePlan:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [operations, audit, retired_version_history, instance_history]
+        before:
+          $ref: '#/components/schemas/Timestamp'
+        eligible_count:
+          $ref: '#/components/schemas/Revision'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [kind, before, eligible_count, revision]
+    PurgeHistory:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [operations, audit, retired_version_history, instance_history]
+        before:
+          $ref: '#/components/schemas/Timestamp'
+        scope_service_ids:
+          $ref: '#/components/schemas/ServiceScope'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [kind, before, scope_service_ids, expected_revision, reason]
+    PurgeResult:
+      type: object
+      additionalProperties: false
+      properties:
+        kind:
+          type: string
+          enum: [operations, audit, retired_version_history, instance_history]
+        before:
+          $ref: '#/components/schemas/Timestamp'
+        removed_count:
+          $ref: '#/components/schemas/Revision'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [kind, before, removed_count, revision]
+    ReloadResult:
+      type: object
+      additionalProperties: false
+      properties:
+        revision:
+          $ref: '#/components/schemas/Revision'
+        reloaded_at:
+          $ref: '#/components/schemas/Timestamp'
+      required: [revision, reloaded_at]
+    DisconnectResult:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        instance_id:
+          $ref: '#/components/schemas/ID'
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [service_id, instance_id, revision]
+    IssueGrant:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        instance_id:
+          $ref: '#/components/schemas/ID'
+        version:
+          $ref: '#/components/schemas/Version'
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/Prefix'
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+        mounts:
+          type: object
+          maxProperties: 32
+          propertyNames:
+            pattern: ^[a-z][a-z0-9_-]{0,63}$(?![\s\S])
+          additionalProperties:
+            $ref: '#/components/schemas/Prefix'
+          description: Значения должны быть точными элементами paths.
+        path_mode:
+          $ref: '#/components/schemas/PathMode'
+        rewrite_mount_headers:
+          $ref: '#/components/schemas/Bool'
+        spki_sha256:
+          $ref: '#/components/schemas/SHA256'
+        artifact_digest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$(?![\s\S])
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [service_id, instance_id, version, paths, mounts, path_mode, rewrite_mount_headers, spki_sha256, artifact_digest,
+        expires_at, expected_revision, reason]
+      description: Срок не более 1 часа от выдачи. Digest относится к проверенному deployment artifact; проверка его подписи
+        входит в процедуру допуска.
+    GrantRecord:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        instance_id:
+          $ref: '#/components/schemas/ID'
+        version:
+          $ref: '#/components/schemas/Version'
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/Prefix'
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+        mounts:
+          type: object
+          maxProperties: 32
+          propertyNames:
+            pattern: ^[a-z][a-z0-9_-]{0,63}$(?![\s\S])
+          additionalProperties:
+            $ref: '#/components/schemas/Prefix'
+          description: Значения должны быть точными элементами paths.
+        path_mode:
+          $ref: '#/components/schemas/PathMode'
+        rewrite_mount_headers:
+          $ref: '#/components/schemas/Bool'
+        spki_sha256:
+          $ref: '#/components/schemas/SHA256'
+        artifact_digest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$(?![\s\S])
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        grant_id:
+          $ref: '#/components/schemas/GrantID'
+        revision:
+          $ref: '#/components/schemas/Revision'
+        secret_available:
+          const: false
+      required: [service_id, instance_id, version, paths, mounts, path_mode, rewrite_mount_headers, spki_sha256, artifact_digest,
+        expires_at, grant_id, revision, secret_available]
+    GrantSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        instance_id:
+          $ref: '#/components/schemas/ID'
+        version:
+          $ref: '#/components/schemas/Version'
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/Prefix'
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+        mounts:
+          type: object
+          maxProperties: 32
+          propertyNames:
+            pattern: ^[a-z][a-z0-9_-]{0,63}$(?![\s\S])
+          additionalProperties:
+            $ref: '#/components/schemas/Prefix'
+          description: Значения должны быть точными элементами paths.
+        path_mode:
+          $ref: '#/components/schemas/PathMode'
+        rewrite_mount_headers:
+          $ref: '#/components/schemas/Bool'
+        spki_sha256:
+          $ref: '#/components/schemas/SHA256'
+        artifact_digest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$(?![\s\S])
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        grant_id:
+          $ref: '#/components/schemas/GrantID'
+        revision:
+          $ref: '#/components/schemas/Revision'
+        secret_available:
+          const: false
+        state:
+          type: string
+          enum: [active, expired, revoked]
+      required: [service_id, instance_id, version, paths, mounts, path_mode, rewrite_mount_headers, spki_sha256, artifact_digest,
+        expires_at, grant_id, revision, secret_available, state]
+    NewGrantRecord:
+      type: object
+      additionalProperties: false
+      properties:
+        service_id:
+          $ref: '#/components/schemas/ServiceID'
+        instance_id:
+          $ref: '#/components/schemas/ID'
+        version:
+          $ref: '#/components/schemas/Version'
+        paths:
+          type: array
+          items:
+            $ref: '#/components/schemas/Prefix'
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+        mounts:
+          type: object
+          maxProperties: 32
+          propertyNames:
+            pattern: ^[a-z][a-z0-9_-]{0,63}$(?![\s\S])
+          additionalProperties:
+            $ref: '#/components/schemas/Prefix'
+          description: Значения должны быть точными элементами paths.
+        path_mode:
+          $ref: '#/components/schemas/PathMode'
+        rewrite_mount_headers:
+          $ref: '#/components/schemas/Bool'
+        spki_sha256:
+          $ref: '#/components/schemas/SHA256'
+        artifact_digest:
+          type: string
+          minLength: 71
+          maxLength: 71
+          pattern: ^sha256:[0-9a-f]{64}$(?![\s\S])
+        expires_at:
+          $ref: '#/components/schemas/Timestamp'
+        grant_id:
+          $ref: '#/components/schemas/GrantID'
+        revision:
+          $ref: '#/components/schemas/Revision'
+        secret_available:
+          const: true
+        deployment_grant:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z0-9_-]{22,128}\.[A-Za-z0-9_-]{43,256}$(?![\s\S])
+          description: Полный opaque grant формата grant_id.secret. Поле только для первого успешного ответа.
+      required: [service_id, instance_id, version, paths, mounts, path_mode, rewrite_mount_headers, spki_sha256, artifact_digest,
+        expires_at, grant_id, revision, secret_available, deployment_grant]
+    GrantResponse:
+      oneOf:
+      - $ref: '#/components/schemas/NewGrantRecord'
+      - $ref: '#/components/schemas/GrantRecord'
+    RevocationTarget:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        properties:
+          kind:
+            const: service
+          service_id:
+            $ref: '#/components/schemas/ServiceID'
+        required: [kind, service_id]
+      - type: object
+        additionalProperties: false
+        properties:
+          kind:
+            const: spki_sha256
+          service_id:
+            $ref: '#/components/schemas/ServiceID'
+          value:
+            $ref: '#/components/schemas/SHA256'
+        required: [kind, service_id, value]
+      - type: object
+        additionalProperties: false
+        properties:
+          kind:
+            const: certificate_serial
+          service_id:
+            $ref: '#/components/schemas/ServiceID'
+          value:
+            type: string
+            minLength: 1
+            maxLength: 256
+        required: [kind, service_id, value]
+      - type: object
+        additionalProperties: false
+        properties:
+          kind:
+            const: grant_id
+          service_id:
+            $ref: '#/components/schemas/ServiceID'
+          value:
+            $ref: '#/components/schemas/GrantID'
+        required: [kind, service_id, value]
+      - type: object
+        additionalProperties: false
+        properties:
+          kind:
+            const: hmac_key_id
+          service_id:
+            $ref: '#/components/schemas/ServiceID'
+          value:
+            $ref: '#/components/schemas/ID'
+        required: [kind, service_id, value]
+    RevokeCredential:
+      type: object
+      additionalProperties: false
+      properties:
+        target:
+          $ref: '#/components/schemas/RevocationTarget'
+        expected_revision:
+          $ref: '#/components/schemas/Revision'
+        reason:
+          $ref: '#/components/schemas/Reason'
+      required: [target, expected_revision, reason]
+    RevocationResult:
+      type: object
+      additionalProperties: false
+      properties:
+        target:
+          $ref: '#/components/schemas/RevocationTarget'
+        cursor:
+          $ref: '#/components/schemas/Revision'
+        revision:
+          $ref: '#/components/schemas/Revision'
+        revoked_at:
+          $ref: '#/components/schemas/Timestamp'
+      required: [target, cursor, revision, revoked_at]
+    ChangeValidation:
+      oneOf:
+      - type: object
+        additionalProperties: false
+        properties:
+          operation:
+            const: frontend_override
+          candidate:
+            type: object
+            additionalProperties: false
+            properties:
+              enabled:
+                $ref: '#/components/schemas/Bool'
+              service_id:
+                anyOf:
+                - $ref: '#/components/schemas/ServiceID'
+                - type: 'null'
+            required: [enabled, service_id]
+            if:
+              properties:
+                enabled:
+                  const: true
+            then:
+              properties:
+                service_id:
+                  $ref: '#/components/schemas/ServiceID'
+          expected_revision:
+            $ref: '#/components/schemas/Revision'
+          scope_service_ids:
+            $ref: '#/components/schemas/ServiceScope'
+        required: [operation, candidate, expected_revision, scope_service_ids]
+      - type: object
+        additionalProperties: false
+        properties:
+          operation:
+            const: route_release
+          candidate:
+            type: object
+            additionalProperties: false
+            properties:
+              service_id:
+                $ref: '#/components/schemas/ServiceID'
+              path:
+                allOf:
+                - $ref: '#/components/schemas/Prefix'
+                - not:
+                    const: /
+            required: [service_id, path]
+          expected_revision:
+            $ref: '#/components/schemas/Revision'
+          scope_service_ids:
+            $ref: '#/components/schemas/ServiceScope'
+        required: [operation, candidate, expected_revision, scope_service_ids]
+      - type: object
+        additionalProperties: false
+        properties:
+          operation:
+            const: config_import
+          candidate:
+            type: object
+            additionalProperties: false
+            properties:
+              config_yaml:
+                type: string
+                minLength: 1
+                maxLength: 1048576
+                description: YAML-кандидат конфигурации. Сервер проверяет его schema, дубликаты и фактически меняемые объекты;
+                  действуют правила явного импорта из ТЗ 3.20, 3.24 и 5.5.6. Секреты передаются ссылками на защищённые источники.
+            required: [config_yaml]
+          expected_revision:
+            $ref: '#/components/schemas/Revision'
+          scope_service_ids:
+            $ref: '#/components/schemas/ServiceScope'
+        required: [operation, candidate, expected_revision, scope_service_ids]
+    AuditEvent:
+      type: object
+      additionalProperties: false
+      properties:
+        event_id:
+          $ref: '#/components/schemas/Revision'
+        occurred_at:
+          $ref: '#/components/schemas/Timestamp'
+        actor:
+          type: string
+          minLength: 1
+          maxLength: 512
+        request_id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        service_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceID'
+          uniqueItems: true
+        operation:
+          type: string
+          minLength: 1
+          maxLength: 64
+        operation_id:
+          anyOf:
+          - $ref: '#/components/schemas/OperationID'
+          - type: 'null'
+        outcome:
+          type: string
+          enum: [committed, rejected]
+        reason:
+          anyOf:
+          - $ref: '#/components/schemas/Reason'
+          - type: 'null'
+        previous_revision:
+          anyOf:
+          - $ref: '#/components/schemas/Revision'
+          - type: 'null'
+        revision:
+          anyOf:
+          - $ref: '#/components/schemas/Revision'
+          - type: 'null'
+        diff:
+          type: array
+          items:
+            $ref: '#/components/schemas/SafeChange'
+      required: [event_id, occurred_at, actor, request_id, service_ids, operation, operation_id, outcome, reason, previous_revision,
+        revision, diff]
+    OperationSummary:
+      type: object
+      additionalProperties: false
+      properties:
+        operation_id:
+          $ref: '#/components/schemas/OperationID'
+        committed_at:
+          $ref: '#/components/schemas/Timestamp'
+        service_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceID'
+          uniqueItems: true
+        operation:
+          $ref: '#/components/schemas/OperationName'
+        state:
+          const: committed
+        revision:
+          $ref: '#/components/schemas/Revision'
+      required: [operation_id, committed_at, service_ids, operation, state, revision]
+    TunnelPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Tunnel'
+          maxItems: 200
+        next_cursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+        snapshot_revision:
+          $ref: '#/components/schemas/Revision'
+      required: [items, next_cursor, snapshot_revision]
+    RoutePage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Route'
+          maxItems: 200
+        next_cursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+        snapshot_revision:
+          $ref: '#/components/schemas/Revision'
+        frontend_override:
+          anyOf:
+          - $ref: '#/components/schemas/FrontendOverride'
+          - type: 'null'
+          description: Снимок override при наличии viewer scope на назначенный сервис; иначе null.
+      required: [items, next_cursor, snapshot_revision, frontend_override]
+    VersionPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceVersion'
+          maxItems: 200
+        next_cursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+        snapshot_revision:
+          $ref: '#/components/schemas/Revision'
+      required: [items, next_cursor, snapshot_revision]
+    AuditPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditEvent'
+          maxItems: 200
+        next_cursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+        snapshot_revision:
+          $ref: '#/components/schemas/Revision'
+      required: [items, next_cursor, snapshot_revision]
+    GrantPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/GrantSummary'
+          maxItems: 200
+        next_cursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+        snapshot_revision:
+          $ref: '#/components/schemas/Revision'
+      required: [items, next_cursor, snapshot_revision]
+    OperationPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OperationSummary'
+          maxItems: 200
+        next_cursor:
+          anyOf:
+          - $ref: '#/components/schemas/Cursor'
+          - type: 'null'
+        snapshot_revision:
+          $ref: '#/components/schemas/Revision'
+      required: [items, next_cursor, snapshot_revision]
+    OperationName:
+      type: string
+      enum: [updateRollout, promoteRollout, rollbackRollout, switchPrimary, updateInterserviceAccess, activateRoute, retireRoute,
+        releaseRoute, updateFrontendOverride, importConfig, retireVersion, restoreVersion, deleteService, purgeHistory, reloadSecrets,
+        disconnectTunnel, issueDeploymentGrant, revokeCredential]
+    OperationResult:
+      type: object
+      additionalProperties: false
+      properties:
+        operation_id:
+          $ref: '#/components/schemas/OperationID'
+        committed_at:
+          $ref: '#/components/schemas/Timestamp'
+        service_ids:
+          type: array
+          items:
+            $ref: '#/components/schemas/ServiceID'
+          uniqueItems: true
+        operation:
+          $ref: '#/components/schemas/OperationName'
+        state:
+          const: committed
+        revision:
+          $ref: '#/components/schemas/Revision'
+        result:
+          type: object
+      required: [operation_id, committed_at, service_ids, operation, state, revision, result]
+      allOf:
+      - if:
+          properties:
+            operation:
+              const: updateRollout
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/Rollout'
+      - if:
+          properties:
+            operation:
+              const: promoteRollout
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/Rollout'
+      - if:
+          properties:
+            operation:
+              const: rollbackRollout
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/Rollout'
+      - if:
+          properties:
+            operation:
+              const: switchPrimary
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/ActiveInstanceResult'
+      - if:
+          properties:
+            operation:
+              const: updateInterserviceAccess
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/AccessState'
+      - if:
+          properties:
+            operation:
+              const: activateRoute
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/RouteChangeResult'
+      - if:
+          properties:
+            operation:
+              const: retireRoute
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/RouteChangeResult'
+      - if:
+          properties:
+            operation:
+              const: releaseRoute
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/RouteChangeResult'
+      - if:
+          properties:
+            operation:
+              const: updateFrontendOverride
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/FrontendResult'
+      - if:
+          properties:
+            operation:
+              const: importConfig
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/ImportResult'
+      - if:
+          properties:
+            operation:
+              const: retireVersion
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/VersionMutation'
+      - if:
+          properties:
+            operation:
+              const: restoreVersion
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/VersionMutation'
+      - if:
+          properties:
+            operation:
+              const: deleteService
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/DeleteServiceResult'
+      - if:
+          properties:
+            operation:
+              const: purgeHistory
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/PurgeResult'
+      - if:
+          properties:
+            operation:
+              const: reloadSecrets
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/ReloadResult'
+      - if:
+          properties:
+            operation:
+              const: disconnectTunnel
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/DisconnectResult'
+      - if:
+          properties:
+            operation:
+              const: issueDeploymentGrant
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/GrantRecord'
+      - if:
+          properties:
+            operation:
+              const: revokeCredential
+        then:
+          properties:
+            result:
+              $ref: '#/components/schemas/RevocationResult'
+      description: Результат уже зафиксированной операции. Выдача grant возвращает GrantRecord с secret_available=false.
