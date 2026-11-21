@@ -1,0 +1,141 @@
+# Локальный профиль разработки из ТЗ §6.
+deployment:
+  mode: development
+
+server:
+  https_addr: "127.0.0.1:8443"
+  tls:
+    cert_file: "./certs/server.pem"
+    key_file: "./certs/server-key.pem"
+
+upstream:
+  url: "http://127.0.0.1:8080"     # SPA по умолчанию, сохраняется при override
+
+frontend_override:
+  enabled: true                   # default: false
+  service_id: "frontend-service"  # только этот сервис может регистрировать /
+
+tunnel:
+  quic:
+    enabled: true
+    addr: "127.0.0.1:7171"                 # UDP
+    keepalive_interval: 15s
+    idle_timeout: 45s
+  wss:
+    enabled: true
+    addr: "127.0.0.1:7172"                 # TCP
+    path: "/tunnel"
+    ping_interval: 15s
+    pong_timeout: 10s
+    missed_pongs: 2
+    write_timeout: 10s
+    max_chunk_bytes: 32768
+    initial_window_bytes: 65536
+  tls:
+    cert_file: "./certs/server.pem"
+    key_file: "./certs/server-key.pem"
+  register_timeout: 10s
+  max_control_message_bytes: 65536
+  max_paths_per_instance: 32
+  max_versions_per_service: 100
+  max_inflight_per_tunnel: 1000
+  max_tunnels: 1000
+  shared_paths: ["/health", "/metrics"]
+
+auth:
+  mode: bearer
+  bearer_tokens:
+    - token: "replace-with-service-secret"
+      service_id: "my-service"
+    - token: "replace-with-reports-tunnel-secret"
+      service_id: "reports-service"
+    - token: "${OUTGATE_FRONTEND_TUNNEL_TOKEN}"
+      service_id: "frontend-service"
+
+services:
+  frontend-service:
+    allowed_paths: ["/"]          # точное право на корневой override, не на поддеревья
+    rollout:
+      stable_version: "2026.11.21"
+      canary_version: null
+      canary_percent: 0
+  my-service:
+    allowed_paths: ["/api/v1", "/health", "/metrics"]
+    rollout:
+      stable_version: "1.4.2"
+      canary_version: null
+      canary_percent: 0
+  reports-service:
+    allowed_paths: ["/api/v2"]
+    instance_routing:
+      strategy: active_passive
+      preempt: false
+      recovery_hold_down: 30s
+      readiness:
+        interval: 5s
+        timeout: 2s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        status_timeout: 15s
+      versions:
+        "1.0.0":
+          instance_order: ["reports-main", "reports-backup-1", "reports-backup-2"]
+    rollout:
+      stable_version: "1.0.0"
+      canary_version: null
+      canary_percent: 0
+
+interservice:
+  signature_ttl: 60s
+  clock_skew: 30s
+  replay_cache_max_entries: 100000
+  trusted_attributes:
+    tenant_id: "X-User-Tenant-ID"
+  context_limits:
+    user_id_bytes: 128
+    roles: 32
+    role_bytes: 64
+    attributes: 16
+    attribute_value_bytes: 1024
+    total_bytes: 8192
+  callers:
+    my-service:
+      keys:
+        - key_id: "my-call-1"
+          secret_env: "OUTGATE_MY_SERVICE_CALL_KEY"
+  recipients:
+    reports-service:
+      active_key_id: "gateway-reports-1"
+      keys:
+        - key_id: "gateway-reports-1"
+          secret_file: "./secrets/gateway-reports.key"
+  policies:
+    - caller: "my-service"
+      target: "reports-service"
+      paths: ["/api/v2"]
+      methods: ["GET", "POST"]
+      allow_user_context: true
+      allow_background: true
+
+routing:
+  strategy: round_robin           # default; сервис может выбрать active_passive
+  reserved_api_prefixes: ["/api"] # нет SPA fallback
+  response_header_timeout: 60s
+  body_idle_timeout: 60s
+  request_timeout: 0s              # общий deadline обычного HTTP отключён, включая SSE
+  max_request_body_bytes: 104857600
+  max_response_body_bytes: 104857600
+  shutdown_timeout: 30s
+
+websocket:
+  handshake_timeout: 10s
+  idle_timeout: 0s                 # бездействие приложения не закрывает WebSocket
+  write_timeout: 10s               # предел ожидания заблокированной записи
+
+observability:
+  addr: "127.0.0.1:9090"           # /healthz, /readyz, /metrics
+  log_level: info
+
+admin:
+  addr: "127.0.0.1:9091"
+  token: "replace-with-admin-secret"

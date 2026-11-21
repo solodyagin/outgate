@@ -1,0 +1,2852 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://outgate.example/spec/config/config.schema.json",
+  "title": "Outgate gateway configuration",
+  "description": "ТЗ 3.18, 3.24, 5.5–5.6, 6–6.5. Production применяется по умолчанию. Структурная проверка YAML после строгого разбора. Defaults — аннотации для загрузчика, не автозаполнение валидатором. Runtime дополнительно проверяет связи, byte limits, сертификаты, файлы, secret references, источники и backend.",
+  "x-outgate-reload": "Перезапуск для статической конфигурации. Production bootstrap fields переходят в control state; явный импорт использует importCandidate. Ключи/сертификаты перечитываются отдельной аутентифицированной операцией.",
+  "x-outgate-secret": "value маскируется полностью; reference — ссылка на защищённый источник. Ни значения, ни выведенные ошибки разрешения не передают секрет.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "enum": [
+            "production",
+            "development"
+          ],
+          "default": "production"
+        },
+        "startup_grace": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "180s",
+          "description": "Production grace по умолчанию 180s; учитывает recovery barrier."
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "https_addr": {
+          "$ref": "#/$defs/listenAddress",
+          "default": ":8443"
+        },
+        "tls": {
+          "$ref": "#/$defs/serverTLS"
+        },
+        "allowed_authorities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/authority"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "trusted_proxy_cidrs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cidr"
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "read_header_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s"
+        },
+        "max_header_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768,
+          "default": 32768
+        },
+        "max_header_fields": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 100
+        },
+        "max_request_line_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192,
+          "default": 8192
+        },
+        "min_upload_rate_bytes_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 1024
+        },
+        "upload_rate_grace": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "10s"
+        },
+        "upload_rate_window": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "30s"
+        }
+      },
+      "required": [
+        "tls"
+      ]
+    },
+    "upstream": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/httpUrl"
+        },
+        "ca_file": {
+          "$ref": "#/$defs/filePath"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    },
+    "frontend_override": {
+      "$ref": "#/$defs/frontendOverride"
+    },
+    "tunnel": {
+      "$ref": "#/$defs/tunnel"
+    },
+    "auth": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/devAuth"
+        },
+        {
+          "$ref": "#/$defs/prodAuth"
+        }
+      ]
+    },
+    "services": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/serviceId"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/service"
+      },
+      "minProperties": 1
+    },
+    "interservice": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/devInterservice"
+        },
+        {
+          "$ref": "#/$defs/prodInterservice"
+        }
+      ]
+    },
+    "routing": {
+      "$ref": "#/$defs/routing"
+    },
+    "websocket": {
+      "$ref": "#/$defs/websocket"
+    },
+    "observability": {
+      "$ref": "#/$defs/observability"
+    },
+    "admin": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/devAdmin"
+        },
+        {
+          "$ref": "#/$defs/prodAdmin"
+        }
+      ]
+    },
+    "storage": {
+      "$ref": "#/$defs/storage"
+    },
+    "security": {
+      "$ref": "#/$defs/security"
+    },
+    "audit": {
+      "$ref": "#/$defs/audit"
+    }
+  },
+  "required": [
+    "server",
+    "upstream",
+    "tunnel",
+    "auth",
+    "services",
+    "admin"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "deployment": {
+            "properties": {
+              "mode": {
+                "const": "development"
+              }
+            },
+            "required": [
+              "mode"
+            ]
+          }
+        },
+        "required": [
+          "deployment"
+        ]
+      },
+      "then": {
+        "properties": {
+          "auth": {
+            "$ref": "#/$defs/devAuth"
+          },
+          "admin": {
+            "$ref": "#/$defs/devAdmin"
+          },
+          "interservice": {
+            "$ref": "#/$defs/devInterservice"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "server": {
+            "required": [
+              "allowed_authorities"
+            ]
+          },
+          "upstream": {
+            "properties": {
+              "url": {
+                "$ref": "#/$defs/httpsUrl"
+              }
+            },
+            "required": [
+              "ca_file"
+            ]
+          },
+          "auth": {
+            "$ref": "#/$defs/prodAuth"
+          },
+          "admin": {
+            "$ref": "#/$defs/prodAdmin"
+          },
+          "interservice": {
+            "$ref": "#/$defs/prodInterservice"
+          },
+          "services": {
+            "additionalProperties": {
+              "required": [
+                "grant_permissions"
+              ]
+            }
+          }
+        },
+        "required": [
+          "interservice",
+          "storage",
+          "security",
+          "audit"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "serviceId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$(?![\\s\\S])"
+    },
+    "instanceId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$(?![\\s\\S])"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$(?![\\s\\S])",
+      "description": "ID сборки, 1–128 байт UTF-8; пробельная строка запрещена."
+    },
+    "filePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$(?![\\s\\S])",
+      "description": "Путь к файлу или источнику. Абсолютные и относительные пути Linux/Windows."
+    },
+    "positiveDuration": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^(?=.*[1-9])(?:(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:ns|us|µs|μs|ms|s|m|h))+$(?![\\s\\S])",
+      "description": "Положительная длительность Go duration. Допустимы ns/us/µs/μs/ms/s/m/h и составные значения. Parser проверяет представимость и ограничения из ТЗ."
+    },
+    "optionalDuration": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/positiveDuration"
+        },
+        {
+          "const": "0s"
+        }
+      ],
+      "description": "0s явно отключает этот timeout."
+    },
+    "prefix": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "pattern": "^(?!.*//)(?!.*[/]\\.{1,2}(?:/|$))/[^\\s%?#\\\\\\u0000-\\u001f\\u007f-\\u009f]*$(?![\\s\\S])",
+      "description": "Публичный префикс. Нормализация и дубли после удаления конечного слеша проверяются отдельно."
+    },
+    "nonRootPrefix": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/prefix"
+        },
+        {
+          "not": {
+            "const": "/"
+          }
+        }
+      ]
+    },
+    "listenAddress": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 261,
+      "pattern": "^(?:\\[[0-9A-Fa-f:.%]+\\]|[A-Za-z0-9._-]*)\\:[1-9][0-9]{0,4}$(?![\\s\\S])",
+      "description": "host:port, [IPv6]:port или :port. Port 1–65535 проверяется при разборе адреса."
+    },
+    "loopbackAddress": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 261,
+      "pattern": "^(?:127(?:\\.[0-9]{1,3}){3}|\\[::1\\]|localhost)\\:[1-9][0-9]{0,4}$(?![\\s\\S])",
+      "description": "Development Admin listener ограничен loopback. Runtime проверяет фактический bind."
+    },
+    "authority": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 261,
+      "pattern": "^(?:\\[[0-9A-Fa-f:.]+\\]|[A-Za-z0-9.-]+)(?::[1-9][0-9]{0,4})?$(?![\\s\\S])"
+    },
+    "cidr": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[0-9A-Fa-f:.]+/[0-9]{1,3}$(?![\\s\\S])",
+      "description": "Сеть IPv4/IPv6 в формате CIDR; длина маски валидируется parser."
+    },
+    "httpsUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^https://[^\\s/@?#]+(?:[/?][^\\s#]*)?$(?![\\s\\S])",
+      "format": "uri",
+      "description": "Абсолютный HTTPS URL без userinfo или fragment. Runtime проверяет authority и назначение URL."
+    },
+    "httpUrl": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^https?://[^\\s/@?#]+(?:[/?][^\\s#]*)?$(?![\\s\\S])",
+      "format": "uri"
+    },
+    "httpsOrigin": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 261,
+      "pattern": "^https://[^\\s/@?#]+$(?![\\s\\S])",
+      "format": "uri"
+    },
+    "spiffeUri": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^spiffe://[a-z0-9.-]+(?:/[A-Za-z0-9._-]+)+$(?![\\s\\S])",
+      "format": "uri"
+    },
+    "httpMethod": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[!#$%&'+.^_`|~A-Za-z0-9-]+$(?![\\s\\S])"
+    },
+    "keyId": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$(?![\\s\\S])"
+    },
+    "serviceScope": {
+      "oneOf": [
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/serviceId"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        {
+          "const": [
+            "*"
+          ]
+        }
+      ]
+    },
+    "jwtAlgorithms": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "RS256",
+          "RS384",
+          "RS512",
+          "PS256",
+          "PS384",
+          "PS512",
+          "ES256",
+          "ES384",
+          "ES512",
+          "EdDSA"
+        ]
+      },
+      "uniqueItems": true,
+      "minItems": 1,
+      "description": "Разрешённые асимметричные JWT algorithms. Runtime проверяет реализацию алгоритма и соответствие типа ключа."
+    },
+    "serverTLS": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cert_file": {
+          "$ref": "#/$defs/filePath"
+        },
+        "key_file": {
+          "$ref": "#/$defs/filePath",
+          "x-outgate-secret": "reference"
+        }
+      },
+      "required": [
+        "cert_file",
+        "key_file"
+      ],
+      "x-outgate-reload": "authenticated-secret-reload"
+    },
+    "mutualTLS": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cert_file": {
+          "$ref": "#/$defs/filePath"
+        },
+        "key_file": {
+          "$ref": "#/$defs/filePath",
+          "x-outgate-secret": "reference"
+        },
+        "client_ca_file": {
+          "$ref": "#/$defs/filePath"
+        }
+      },
+      "required": [
+        "cert_file",
+        "key_file",
+        "client_ca_file"
+      ],
+      "x-outgate-reload": "authenticated-secret-reload"
+    },
+    "rollout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stable_version": {
+          "$ref": "#/$defs/version"
+        },
+        "canary_version": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/version"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "canary_percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "default": 0
+        }
+      },
+      "required": [
+        "stable_version"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "canary_percent": {
+                "minimum": 1
+              }
+            },
+            "required": [
+              "canary_percent"
+            ]
+          },
+          "then": {
+            "properties": {
+              "canary_version": {
+                "$ref": "#/$defs/version"
+              }
+            },
+            "required": [
+              "canary_version"
+            ]
+          }
+        }
+      ],
+      "description": "Stable и canary различаются. Ненулевая доля требует покрытия путей и совместимых mounts.",
+      "x-outgate-reload": "bootstrap-and-control-state"
+    },
+    "readiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "interval": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s"
+        },
+        "timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "2s"
+        },
+        "healthy_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 2
+        },
+        "unhealthy_threshold": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 3
+        },
+        "status_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "15s"
+        }
+      },
+      "description": "timeout < interval, status_timeout ≥ 2 × interval."
+    },
+    "instanceRouting": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "enum": [
+            "round_robin",
+            "active_passive"
+          ]
+        },
+        "preempt": {
+          "type": "boolean",
+          "default": false
+        },
+        "recovery_hold_down": {
+          "$ref": "#/$defs/optionalDuration",
+          "default": "30s",
+          "description": "0s задаёт нулевую выдержку перед допустимым preempt."
+        },
+        "readiness": {
+          "$ref": "#/$defs/readiness"
+        },
+        "versions": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/version"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "instance_order": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/instanceId"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "instance_order"
+            ]
+          },
+          "minProperties": 1
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "strategy": {
+                "const": "active_passive"
+              }
+            },
+            "required": [
+              "strategy"
+            ]
+          },
+          "then": {
+            "required": [
+              "versions"
+            ]
+          }
+        }
+      ],
+      "description": "Если strategy отсутствует, действует routing.strategy. Положительные версии active-passive требуют непустого порядка; повтор ID между пулами запрещён."
+    },
+    "grantPermissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_path_modes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "preserve",
+              "strip"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "default": [
+            "preserve",
+            "strip"
+          ]
+        },
+        "allow_rewrite_mount_headers": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "description": "Допуск выдачи grant в пределах services.<id>.allowed_paths. Точный binding задаёт сам grant."
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "allowed_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/prefix"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "rollout": {
+          "$ref": "#/$defs/rollout"
+        },
+        "instance_routing": {
+          "$ref": "#/$defs/instanceRouting"
+        },
+        "grant_permissions": {
+          "$ref": "#/$defs/grantPermissions"
+        }
+      },
+      "required": [
+        "allowed_paths",
+        "rollout"
+      ]
+    },
+    "frontendOverride": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "service_id": {
+          "$ref": "#/$defs/serviceId"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "enabled"
+            ]
+          },
+          "then": {
+            "required": [
+              "service_id"
+            ]
+          }
+        }
+      ],
+      "description": "Только назначенный сервис может регистрировать /. Production переключает backend через control state."
+    },
+    "quic": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "addr": {
+          "$ref": "#/$defs/listenAddress",
+          "default": ":7171"
+        },
+        "keepalive_interval": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "15s"
+        },
+        "idle_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "45s"
+        }
+      },
+      "description": "UDP. idle_timeout должен быть больше keepalive_interval."
+    },
+    "wss": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "addr": {
+          "$ref": "#/$defs/listenAddress",
+          "default": ":7172"
+        },
+        "path": {
+          "$ref": "#/$defs/prefix",
+          "default": "/tunnel",
+          "description": "Абсолютный HTTP-путь WSS без query и fragment."
+        },
+        "ping_interval": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "15s"
+        },
+        "pong_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "10s"
+        },
+        "missed_pongs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 2
+        },
+        "write_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "10s"
+        },
+        "max_chunk_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32768,
+          "default": 32768
+        },
+        "initial_window_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536,
+          "default": 65536
+        },
+        "cancel_ack_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "10s"
+        }
+      },
+      "description": "TCP. pong_timeout должен быть меньше ping_interval."
+    },
+    "tunnel": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quic": {
+          "$ref": "#/$defs/quic"
+        },
+        "wss": {
+          "$ref": "#/$defs/wss"
+        },
+        "tls": {
+          "$ref": "#/$defs/serverTLS"
+        },
+        "connect_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s"
+        },
+        "tls_handshake_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s"
+        },
+        "register_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "10s"
+        },
+        "max_control_message_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65536,
+          "default": 65536
+        },
+        "max_paths_per_instance": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "default": 32
+        },
+        "max_versions_per_service": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 100
+        },
+        "max_inflight_per_tunnel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000,
+          "default": 1000
+        },
+        "max_tunnels": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 1000
+        },
+        "shared_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonRootPrefix"
+          },
+          "uniqueItems": true,
+          "default": []
+        }
+      },
+      "required": [
+        "tls"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "quic": {
+                "properties": {
+                  "enabled": {
+                    "const": false
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            },
+            "required": [
+              "quic"
+            ]
+          },
+          "then": {
+            "properties": {
+              "wss": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              }
+            },
+            "required": [
+              "wss"
+            ]
+          }
+        }
+      ]
+    },
+    "roleBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "enum": [
+            "viewer",
+            "deployer",
+            "security_admin"
+          ]
+        },
+        "service_ids": {
+          "$ref": "#/$defs/serviceScope"
+        }
+      },
+      "required": [
+        "role",
+        "service_ids"
+      ]
+    },
+    "webRoleBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "role": {
+          "enum": [
+            "viewer",
+            "deployer",
+            "security_admin"
+          ]
+        },
+        "service_ids": {
+          "$ref": "#/$defs/serviceScope"
+        }
+      },
+      "required": [
+        "subject",
+        "role",
+        "service_ids"
+      ]
+    },
+    "webDelegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "certificate_uri": {
+          "$ref": "#/$defs/spiffeUri"
+        },
+        "issuer": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "jwks_url": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "algorithms": {
+          "$ref": "#/$defs/jwtAlgorithms"
+        },
+        "audience": {
+          "const": "outgate-admin-api"
+        },
+        "required_acr_values": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "privileged_auth_max_age": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5m",
+          "description": "Не более 5 минут."
+        },
+        "role_bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/webRoleBinding"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "certificate_uri",
+        "issuer",
+        "jwks_url",
+        "algorithms",
+        "audience",
+        "required_acr_values",
+        "role_bindings"
+      ]
+    },
+    "cliPrincipal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/instanceId"
+        },
+        "certificate_uri": {
+          "$ref": "#/$defs/spiffeUri"
+        },
+        "token_env": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$(?![\\s\\S])",
+          "x-outgate-secret": "reference",
+          "description": "Имя переменной окружения с индивидуальным CLI admin token."
+        },
+        "user_subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "bindings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/roleBinding"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "id",
+        "certificate_uri",
+        "token_env",
+        "bindings"
+      ],
+      "description": "Online security_admin требует user_subject и свежую MFA. Offline recovery отдельно."
+    },
+    "devAdmin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "addr": {
+          "$ref": "#/$defs/loopbackAddress"
+        },
+        "token": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "x-outgate-secret": "value",
+          "description": "Development bearer, включая синтаксис ${VAR}. Значение полностью скрывается при выводе."
+        }
+      },
+      "required": [
+        "addr",
+        "token"
+      ]
+    },
+    "prodAdmin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "addr": {
+          "$ref": "#/$defs/listenAddress"
+        },
+        "allowed_cidrs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cidr"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "tls": {
+          "$ref": "#/$defs/mutualTLS"
+        },
+        "principals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cliPrincipal"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "web_delegation": {
+          "$ref": "#/$defs/webDelegation"
+        },
+        "rate_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Admin API token bucket, запросов в секунду."
+        },
+        "burst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Admin API token bucket, запросов."
+        }
+      },
+      "required": [
+        "addr",
+        "allowed_cidrs",
+        "tls",
+        "principals",
+        "web_delegation",
+        "rate_per_second",
+        "burst"
+      ]
+    },
+    "devAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "bearer"
+        },
+        "bearer_tokens": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "token": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4096,
+                "x-outgate-secret": "value",
+                "description": "Development bearer, включая синтаксис ${VAR}. Значение полностью скрывается при выводе."
+              },
+              "service_id": {
+                "$ref": "#/$defs/serviceId"
+              }
+            },
+            "required": [
+              "token",
+              "service_id"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "mode",
+        "bearer_tokens"
+      ]
+    },
+    "prodAuth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "const": "mtls_grant"
+        },
+        "service_ca_file": {
+          "$ref": "#/$defs/filePath"
+        },
+        "service_trust_domain": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$(?![\\s\\S])"
+        },
+        "certificate_max_lifetime": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "24h",
+          "description": "Не более 24 часов."
+        },
+        "grant_max_lifetime": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "1h",
+          "description": "Не более 1 часа."
+        }
+      },
+      "required": [
+        "mode",
+        "service_ca_file",
+        "service_trust_domain"
+      ]
+    },
+    "sqliteSettings": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/filePath"
+        },
+        "journal_mode": {
+          "const": "WAL"
+        },
+        "synchronous": {
+          "const": "FULL"
+        }
+      },
+      "required": [
+        "path",
+        "journal_mode",
+        "synchronous"
+      ]
+    },
+    "postgresSettings": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[^\\s/@?#]+$(?![\\s\\S])"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "default": 5432
+        },
+        "database": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63
+        },
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^[a-z_][a-z0-9_]{0,62}$(?![\\s\\S])"
+        },
+        "user": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 63
+        },
+        "sslmode": {
+          "const": "verify-full"
+        },
+        "ca_file": {
+          "$ref": "#/$defs/filePath"
+        },
+        "max_connections": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 4
+        },
+        "connect_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s"
+        },
+        "query_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s"
+        },
+        "lock_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "2s"
+        },
+        "password_env": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$(?![\\s\\S])",
+          "x-outgate-secret": "reference"
+        },
+        "password_file": {
+          "$ref": "#/$defs/filePath",
+          "x-outgate-secret": "reference"
+        },
+        "client_cert_file": {
+          "$ref": "#/$defs/filePath"
+        },
+        "client_key_file": {
+          "$ref": "#/$defs/filePath",
+          "x-outgate-secret": "reference"
+        }
+      },
+      "required": [
+        "host",
+        "database",
+        "schema",
+        "user",
+        "sslmode",
+        "ca_file"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "password_env"
+          ]
+        },
+        {
+          "required": [
+            "password_file"
+          ]
+        },
+        {
+          "required": [
+            "client_cert_file",
+            "client_key_file"
+          ]
+        }
+      ],
+      "dependentRequired": {
+        "client_cert_file": [
+          "client_key_file"
+        ],
+        "client_key_file": [
+          "client_cert_file"
+        ]
+      }
+    },
+    "sqliteControl": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "driver": {
+          "const": "sqlite"
+        }
+      },
+      "required": [
+        "driver"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/sqliteSettings"
+        }
+      ]
+    },
+    "postgresControl": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "driver": {
+          "const": "postgres"
+        }
+      },
+      "required": [
+        "driver"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/postgresSettings"
+        }
+      ]
+    },
+    "redisReplay": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "driver": {
+          "const": "redis"
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^rediss://[^\\s/@?#]+(?:/[^\\s?#]*)?$(?![\\s\\S])",
+          "format": "uri"
+        },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "password_env": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$(?![\\s\\S])",
+          "x-outgate-secret": "reference"
+        },
+        "ca_file": {
+          "$ref": "#/$defs/filePath"
+        },
+        "require_aof": {
+          "const": true
+        },
+        "require_appendfsync": {
+          "const": "always"
+        },
+        "require_noeviction": {
+          "const": true
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]*$(?![\\s\\S])"
+        },
+        "recovery_barrier": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "120s",
+          "description": "Не менее 120 секунд. Runtime также сверяет epoch/restore/revocations."
+        }
+      },
+      "required": [
+        "driver",
+        "url",
+        "username",
+        "password_env",
+        "ca_file",
+        "require_aof",
+        "require_appendfsync",
+        "require_noeviction",
+        "namespace"
+      ],
+      "description": "Только если адаптер включён в поставку. Runtime подтверждает AOF/always/noeviction/epoch по свежей проверке."
+    },
+    "sqliteReplay": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "driver": {
+          "const": "sqlite"
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]*$(?![\\s\\S])"
+        },
+        "recovery_barrier": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "120s",
+          "description": "Не менее 120 секунд. Runtime также сверяет epoch/restore/revocations."
+        }
+      },
+      "required": [
+        "driver",
+        "namespace"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/sqliteSettings"
+        }
+      ]
+    },
+    "postgresReplay": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "driver": {
+          "const": "postgres"
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]*$(?![\\s\\S])"
+        },
+        "recovery_barrier": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "120s",
+          "description": "Не менее 120 секунд. Runtime также сверяет epoch/restore/revocations."
+        }
+      },
+      "required": [
+        "driver",
+        "namespace"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/postgresSettings"
+        }
+      ]
+    },
+    "replayStore": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/sqliteReplay"
+        },
+        {
+          "$ref": "#/$defs/postgresReplay"
+        },
+        {
+          "$ref": "#/$defs/redisReplay"
+        }
+      ],
+      "description": "Выбор backend явный; при недоступности state защищённый тракт закрыт."
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "control": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/sqliteControl"
+            },
+            {
+              "$ref": "#/$defs/postgresControl"
+            }
+          ],
+          "description": "SQLite — стандартный production backend. При явной конфигурации driver обязателен. Owner lock и durability проверяются перед readiness."
+        },
+        "replay": {
+          "$ref": "#/$defs/replayStore"
+        }
+      },
+      "required": [
+        "control",
+        "replay"
+      ]
+    },
+    "hmacKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "key_id": {
+          "$ref": "#/$defs/keyId"
+        },
+        "secret_env": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$(?![\\s\\S])",
+          "x-outgate-secret": "reference"
+        },
+        "secret_file": {
+          "$ref": "#/$defs/filePath",
+          "x-outgate-secret": "reference"
+        }
+      },
+      "required": [
+        "key_id"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "secret_env"
+          ]
+        },
+        {
+          "required": [
+            "secret_file"
+          ]
+        }
+      ],
+      "description": "Ровно один источник HMAC key. Формат и длина ключа проверяются после разрешения."
+    },
+    "interservicePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "caller": {
+          "$ref": "#/$defs/serviceId"
+        },
+        "target": {
+          "$ref": "#/$defs/serviceId"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/prefix"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/httpMethod"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "allow_user_context": {
+          "type": "boolean",
+          "default": false
+        },
+        "allow_background": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "caller",
+        "target",
+        "paths",
+        "methods",
+        "allow_user_context",
+        "allow_background"
+      ]
+    },
+    "internalOnly": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/serviceId"
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonRootPrefix"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/httpMethod"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "callers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/serviceId"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "target",
+        "paths",
+        "methods",
+        "callers"
+      ]
+    },
+    "delegationIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "issuer": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "jwks_url": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "algorithms": {
+          "$ref": "#/$defs/jwtAlgorithms"
+        },
+        "typ": {
+          "const": "outgate-delegation+jwt"
+        },
+        "max_token_lifetime": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "300s",
+          "description": "Не более 300 секунд."
+        },
+        "clock_skew": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "30s",
+          "description": "Не более 30 секунд."
+        },
+        "jwks_cache_ttl": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5m",
+          "description": "Не более 5 минут."
+        },
+        "unknown_kid_refresh_interval": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "30s",
+          "description": "Не чаще одной попытки за 30 секунд."
+        },
+        "claims": {
+          "type": "object",
+          "required": [
+            "user_id",
+            "roles",
+            "session_id"
+          ],
+          "properties": {
+            "user_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "roles": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            },
+            "session_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128
+            }
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$(?![\\s\\S])"
+          }
+        }
+      },
+      "required": [
+        "issuer",
+        "jwks_url",
+        "algorithms",
+        "typ",
+        "claims"
+      ]
+    },
+    "contextLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "user_id_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 128,
+          "default": 128
+        },
+        "roles": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "default": 32
+        },
+        "role_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 64
+        },
+        "attributes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "default": 16
+        },
+        "attribute_value_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1024,
+          "default": 1024
+        },
+        "total_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192,
+          "default": 8192
+        }
+      }
+    },
+    "devInterservice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "signature_ttl": {
+          "enum": [
+            "60s",
+            "1m"
+          ],
+          "default": "60s"
+        },
+        "clock_skew": {
+          "const": "30s",
+          "default": "30s"
+        },
+        "replay_cache_max_entries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Число nonce в namespace. Проверяется вместе с admitted RPS/burst.",
+          "default": 200000
+        },
+        "trusted_attributes": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^X-User-[A-Za-z0-9-]+$(?![\\s\\S])"
+          },
+          "maxProperties": 16
+        },
+        "context_limits": {
+          "$ref": "#/$defs/contextLimits"
+        },
+        "callers": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/serviceId"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "keys": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/hmacKey"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "keys"
+            ]
+          }
+        },
+        "recipients": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/serviceId"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "active_key_id": {
+                "$ref": "#/$defs/keyId"
+              },
+              "keys": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/hmacKey"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "active_key_id",
+              "keys"
+            ]
+          }
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/interservicePolicy"
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "internal_only": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/internalOnly"
+          },
+          "uniqueItems": true,
+          "default": []
+        }
+      }
+    },
+    "prodInterservice": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "signature_ttl": {
+          "enum": [
+            "60s",
+            "1m"
+          ],
+          "default": "60s"
+        },
+        "clock_skew": {
+          "const": "30s",
+          "default": "30s"
+        },
+        "replay_cache_max_entries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "description": "Число nonce в namespace. Проверяется вместе с admitted RPS/burst.",
+          "default": 200000
+        },
+        "trusted_attributes": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^X-User-[A-Za-z0-9-]+$(?![\\s\\S])"
+          },
+          "maxProperties": 16
+        },
+        "context_limits": {
+          "$ref": "#/$defs/contextLimits"
+        },
+        "callers": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/serviceId"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "keys": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/hmacKey"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "keys"
+            ]
+          }
+        },
+        "recipients": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/serviceId"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "active_key_id": {
+                "$ref": "#/$defs/keyId"
+              },
+              "keys": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/hmacKey"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              }
+            },
+            "required": [
+              "active_key_id",
+              "keys"
+            ]
+          }
+        },
+        "policies": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/interservicePolicy"
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "internal_only": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/internalOnly"
+          },
+          "uniqueItems": true,
+          "default": []
+        },
+        "https_addr": {
+          "$ref": "#/$defs/listenAddress"
+        },
+        "allowed_authorities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/authority"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "tls": {
+          "$ref": "#/$defs/mutualTLS"
+        },
+        "max_hops": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "default": 8
+        },
+        "replay_max_entries_per_caller": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 20000
+        },
+        "caller_rate_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 100
+        },
+        "caller_burst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 200
+        },
+        "identity": {
+          "$ref": "#/$defs/delegationIdentity"
+        }
+      },
+      "required": [
+        "https_addr",
+        "allowed_authorities",
+        "tls",
+        "identity",
+        "callers",
+        "recipients",
+        "policies"
+      ],
+      "description": "Production: replay_cache_max_entries по умолчанию 200000; development: 100000. Capacity валидируется с rate limits по ТЗ 5.5.2."
+    },
+    "rateLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 1000
+        },
+        "http_burst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 2000
+        },
+        "signed_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 1000
+        },
+        "signed_burst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 2000
+        },
+        "per_ip_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 20
+        },
+        "per_ip_burst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 40
+        },
+        "registrations_per_service_per_minute": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 30
+        },
+        "registrations_per_ip_per_minute": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 10
+        },
+        "websocket_handshakes_per_ip_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 5
+        },
+        "target_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "target_burst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "websocket_messages_per_second": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        },
+        "websocket_messages_burst": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "target_per_second",
+        "target_burst",
+        "websocket_messages_per_second",
+        "websocket_messages_burst"
+      ]
+    },
+    "resourceLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "external_connections": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 5000
+        },
+        "connections_per_ip": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 50
+        },
+        "streams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 1000
+        },
+        "streams_per_session": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 10
+        },
+        "tunnels_per_service": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 16
+        },
+        "buffer_bytes_global": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 536870912
+        },
+        "buffer_bytes_per_service": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 67108864
+        },
+        "buffer_bytes_per_tunnel": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 16777216
+        },
+        "concurrency_per_target": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "concurrency_per_target"
+      ],
+      "description": "Число соединений/потоков или байты по имени поля. Budgets global ≥ service ≥ tunnel."
+    },
+    "protectedSessions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_stream_authorization": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "15m",
+          "description": "Не более 15 минут."
+        },
+        "revocation_check_interval": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "15s",
+          "description": "Не более 15 секунд."
+        },
+        "close_on_revocation_within": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "30s",
+          "description": "Не более 30 секунд."
+        },
+        "close_on_expiry_within": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s",
+          "description": "Не более 5 секунд."
+        },
+        "credential_revocation_check_interval": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "2s",
+          "description": "Не более 2 секунд."
+        },
+        "credential_snapshot_max_age": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s",
+          "description": "Не более 5 секунд."
+        },
+        "revocation_publishers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "issuer": {
+                "$ref": "#/$defs/httpsUrl"
+              },
+              "certificate_uri": {
+                "$ref": "#/$defs/spiffeUri"
+              }
+            },
+            "required": [
+              "issuer",
+              "certificate_uri"
+            ]
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "revocation_publishers"
+      ],
+      "description": "Разрешённые издатели отзывов sid/jti привязаны к issuer и cert identity."
+    },
+    "browserSecurity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service_workers_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "service_worker_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonRootPrefix"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "service_worker_max_scope": {
+          "$ref": "#/$defs/prefix"
+        },
+        "api_inline_mime_types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 127,
+            "pattern": "^[a-z0-9.+-]+/[a-z0-9.+-]+$(?![\\s\\S])",
+            "not": {
+              "enum": [
+                "text/html",
+                "application/xhtml+xml",
+                "text/javascript",
+                "application/javascript",
+                "application/ecmascript",
+                "text/ecmascript",
+                "image/svg+xml"
+              ]
+            }
+          },
+          "uniqueItems": true,
+          "minItems": 1,
+          "default": [
+            "application/json",
+            "application/problem+json"
+          ]
+        },
+        "cookie_owners": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/serviceId"
+          }
+        },
+        "cookie_policies": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/prefix"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "domains": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 253,
+                  "pattern": "^[a-zA-Z0-9.-]+$(?![\\s\\S])"
+                },
+                "uniqueItems": true,
+                "default": []
+              },
+              "same_site": {
+                "enum": [
+                  "Lax",
+                  "Strict",
+                  "None"
+                ],
+                "default": "Lax"
+              }
+            },
+            "required": [
+              "paths"
+            ],
+            "description": "Secure/HttpOnly обязательны для session cookie; Domain по умолчанию отсутствует. __Host- требует Path=/ и запрета Domain."
+          }
+        },
+        "allowed_origins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/httpsOrigin"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "frontend_csp": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "pattern": "^[^\\r\\n]+$(?![\\s\\S])"
+        }
+      },
+      "required": [
+        "cookie_owners",
+        "allowed_origins",
+        "frontend_csp"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "service_workers_enabled": {
+                "const": true
+              }
+            },
+            "required": [
+              "service_workers_enabled"
+            ]
+          },
+          "then": {
+            "required": [
+              "service_worker_paths",
+              "service_worker_max_scope"
+            ]
+          }
+        }
+      ],
+      "description": "Origins для проверки браузерных handshake. CORS по умолчанию закрыт. Runtime валидирует CSP, допустимые MIME и cookie scope."
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rate_limits": {
+          "$ref": "#/$defs/rateLimits"
+        },
+        "resource_limits": {
+          "$ref": "#/$defs/resourceLimits"
+        },
+        "sessions": {
+          "$ref": "#/$defs/protectedSessions"
+        },
+        "browser": {
+          "$ref": "#/$defs/browserSecurity"
+        }
+      },
+      "required": [
+        "rate_limits",
+        "resource_limits",
+        "sessions",
+        "browser"
+      ]
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "$ref": "#/$defs/httpsUrl"
+        },
+        "ca_file": {
+          "$ref": "#/$defs/filePath"
+        },
+        "token_env": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$(?![\\s\\S])",
+          "x-outgate-secret": "reference"
+        },
+        "client_cert_file": {
+          "$ref": "#/$defs/filePath"
+        },
+        "client_key_file": {
+          "$ref": "#/$defs/filePath",
+          "x-outgate-secret": "reference"
+        },
+        "outbox_max_events": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 100000
+        },
+        "outbox_max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 268435456
+        },
+        "request_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5s"
+        }
+      },
+      "required": [
+        "url",
+        "ca_file"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "token_env"
+          ]
+        },
+        {
+          "required": [
+            "client_cert_file",
+            "client_key_file"
+          ]
+        }
+      ],
+      "dependentRequired": {
+        "client_cert_file": [
+          "client_key_file"
+        ],
+        "client_key_file": [
+          "client_cert_file"
+        ]
+      },
+      "description": "Защищённый HTTPS endpoint аудита. Устойчивая outbox хранится в control DB."
+    },
+    "websocket": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "handshake_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "10s"
+        },
+        "idle_timeout": {
+          "$ref": "#/$defs/optionalDuration",
+          "default": "0s"
+        },
+        "write_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "10s"
+        },
+        "max_message_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2147483647,
+          "default": 1048576
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "strategy": {
+          "enum": [
+            "round_robin",
+            "active_passive"
+          ],
+          "default": "round_robin"
+        },
+        "reserved_api_prefixes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nonRootPrefix"
+          },
+          "uniqueItems": true,
+          "default": [
+            "/api"
+          ]
+        },
+        "response_header_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "60s"
+        },
+        "body_idle_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "60s"
+        },
+        "request_timeout": {
+          "$ref": "#/$defs/optionalDuration",
+          "default": "0s"
+        },
+        "shutdown_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "30s"
+        },
+        "max_request_body_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "default": 104857600
+        },
+        "max_response_body_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991,
+          "default": 104857600
+        }
+      }
+    },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "addr": {
+          "$ref": "#/$defs/listenAddress",
+          "default": "127.0.0.1:9090"
+        },
+        "log_level": {
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "error"
+          ],
+          "default": "info"
+        },
+        "allowed_cidrs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cidr"
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "tls": {
+          "$ref": "#/$defs/serverTLS"
+        }
+      }
+    },
+    "sqliteBffSession": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "store": {
+          "const": "sqlite"
+        },
+        "encryption_key_file": {
+          "$ref": "#/$defs/filePath",
+          "x-outgate-secret": "reference"
+        },
+        "idle_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "15m",
+          "description": "Не более 15 минут."
+        },
+        "absolute_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "8h",
+          "description": "Не более 8 часов."
+        },
+        "privileged_auth_max_age": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5m",
+          "description": "Не более 5 минут."
+        }
+      },
+      "required": [
+        "store",
+        "encryption_key_file"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/sqliteSettings"
+        }
+      ]
+    },
+    "postgresBffSession": {
+      "type": "object",
+      "unevaluatedProperties": false,
+      "properties": {
+        "store": {
+          "const": "postgres"
+        },
+        "encryption_key_file": {
+          "$ref": "#/$defs/filePath",
+          "x-outgate-secret": "reference"
+        },
+        "idle_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "15m",
+          "description": "Не более 15 минут."
+        },
+        "absolute_timeout": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "8h",
+          "description": "Не более 8 часов."
+        },
+        "privileged_auth_max_age": {
+          "$ref": "#/$defs/positiveDuration",
+          "default": "5m",
+          "description": "Не более 5 минут."
+        }
+      },
+      "required": [
+        "store",
+        "encryption_key_file"
+      ],
+      "allOf": [
+        {
+          "$ref": "#/$defs/postgresSettings"
+        }
+      ]
+    },
+    "adminWebDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "admin_web": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true
+            },
+            "addr": {
+              "$ref": "#/$defs/listenAddress"
+            },
+            "public_origin": {
+              "$ref": "#/$defs/httpsOrigin"
+            },
+            "tls": {
+              "$ref": "#/$defs/serverTLS"
+            },
+            "oidc": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "issuer": {
+                  "$ref": "#/$defs/httpsUrl"
+                },
+                "client_id": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                "client_secret_file": {
+                  "$ref": "#/$defs/filePath",
+                  "x-outgate-secret": "reference"
+                },
+                "redirect_uri": {
+                  "$ref": "#/$defs/httpsUrl"
+                },
+                "api_audience": {
+                  "const": "outgate-admin-api"
+                },
+                "required_acr_values": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 512
+                  },
+                  "uniqueItems": true,
+                  "minItems": 1
+                }
+              },
+              "required": [
+                "issuer",
+                "client_id",
+                "client_secret_file",
+                "redirect_uri",
+                "api_audience",
+                "required_acr_values"
+              ]
+            },
+            "session": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/sqliteBffSession"
+                },
+                {
+                  "$ref": "#/$defs/postgresBffSession"
+                }
+              ],
+              "description": "Ключом сервера шифруются session credentials. База и principal изолированы от gateway stores."
+            },
+            "admin_api": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "url": {
+                  "$ref": "#/$defs/httpsUrl"
+                },
+                "ca_file": {
+                  "$ref": "#/$defs/filePath"
+                },
+                "client_cert_file": {
+                  "$ref": "#/$defs/filePath"
+                },
+                "client_key_file": {
+                  "$ref": "#/$defs/filePath",
+                  "x-outgate-secret": "reference"
+                }
+              },
+              "required": [
+                "url",
+                "ca_file",
+                "client_cert_file",
+                "client_key_file"
+              ]
+            }
+          },
+          "required": [
+            "addr",
+            "public_origin",
+            "tls",
+            "oidc",
+            "session",
+            "admin_api"
+          ]
+        }
+      },
+      "required": [
+        "admin_web"
+      ],
+      "description": "Конфигурация отдельного production BFF. Exact redirect URI и Origin проверяются при запуске."
+    },
+    "importCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "services": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/serviceId"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "rollout": {
+                "$ref": "#/$defs/rollout"
+              },
+              "instance_routing": {
+                "$ref": "#/$defs/instanceRouting"
+              },
+              "allowed_paths": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/prefix"
+                },
+                "uniqueItems": true,
+                "minItems": 1
+              },
+              "grant_permissions": {
+                "$ref": "#/$defs/grantPermissions"
+              }
+            },
+            "minProperties": 1
+          },
+          "minProperties": 1
+        },
+        "frontend_override": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "service_id": {
+              "$ref": "#/$defs/serviceId"
+            }
+          },
+          "required": [
+            "enabled"
+          ],
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "enabled": {
+                    "const": true
+                  }
+                },
+                "required": [
+                  "enabled"
+                ]
+              },
+              "then": {
+                "required": [
+                  "service_id"
+                ]
+              }
+            }
+          ]
+        },
+        "interservice": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "policies": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/interservicePolicy"
+              },
+              "uniqueItems": true,
+              "default": []
+            },
+            "internal_only": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/internalOnly"
+              },
+              "uniqueItems": true,
+              "default": []
+            },
+            "identity": {
+              "$ref": "#/$defs/delegationIdentity"
+            }
+          },
+          "minProperties": 1,
+          "description": "Изменение issuer trust требует глобального security_admin."
+        },
+        "security": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rate_limits": {
+              "$ref": "#/$defs/rateLimits"
+            },
+            "resource_limits": {
+              "$ref": "#/$defs/resourceLimits"
+            }
+          },
+          "minProperties": 1
+        }
+      },
+      "minProperties": 1,
+      "description": "YAML-кандидат опубликованного control state для Admin API config import. Присутствующие поля задают новое значение, отсутствующие сохраняются. Массивы политики заменяются только в разрешённой области. Runtime проверяет согласованность полного результирующего snapshot, preview и scope."
+    }
+  }
+}

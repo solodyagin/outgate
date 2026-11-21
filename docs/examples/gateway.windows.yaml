@@ -1,0 +1,314 @@
+# Gateway production для Windows с SQLite control/replay.
+# Синтетические адреса и ссылки на секреты для проверки контракта.
+deployment:
+  mode: production
+server:
+  https_addr: :8443
+  tls:
+    cert_file: C:/ProgramData/Outgate/secrets/gateway.pem
+    key_file: C:/ProgramData/Outgate/secrets/gateway-key.pem
+  allowed_authorities:
+  - gateway.example.com:8443
+  read_header_timeout: 5s
+  max_header_bytes: 32768
+upstream:
+  url: https://frontend.internal:8080
+  ca_file: C:/ProgramData/Outgate/secrets/upstream-ca.pem
+frontend_override:
+  enabled: false
+  service_id: frontend-service
+tunnel:
+  quic:
+    enabled: true
+    addr: :7171
+    keepalive_interval: 15s
+    idle_timeout: 45s
+  wss:
+    enabled: true
+    addr: :7172
+    path: /tunnel
+    ping_interval: 15s
+    pong_timeout: 10s
+    missed_pongs: 2
+    write_timeout: 10s
+    max_chunk_bytes: 32768
+    initial_window_bytes: 65536
+  tls:
+    cert_file: C:/ProgramData/Outgate/secrets/gateway.pem
+    key_file: C:/ProgramData/Outgate/secrets/gateway-key.pem
+  register_timeout: 10s
+  max_control_message_bytes: 65536
+  max_paths_per_instance: 32
+  max_versions_per_service: 100
+  max_inflight_per_tunnel: 1000
+  max_tunnels: 1000
+  shared_paths:
+  - /health
+  - /metrics
+services:
+  frontend-service:
+    allowed_paths:
+    - /
+    rollout:
+      stable_version: 2026.11.21
+      canary_version: null
+      canary_percent: 0
+    grant_permissions:
+      allowed_path_modes:
+      - preserve
+      - strip
+  my-service:
+    allowed_paths:
+    - /api/v1
+    - /health
+    - /metrics
+    rollout:
+      stable_version: 1.4.2
+      canary_version: null
+      canary_percent: 0
+    grant_permissions:
+      allowed_path_modes:
+      - preserve
+      - strip
+  reports-service:
+    allowed_paths:
+    - /api/v2
+    instance_routing:
+      strategy: active_passive
+      preempt: false
+      recovery_hold_down: 30s
+      readiness:
+        interval: 5s
+        timeout: 2s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        status_timeout: 15s
+      versions:
+        1.0.0:
+          instance_order:
+          - reports-main
+          - reports-backup-1
+          - reports-backup-2
+    rollout:
+      stable_version: 1.0.0
+      canary_version: null
+      canary_percent: 0
+    grant_permissions:
+      allowed_path_modes:
+      - preserve
+      - strip
+interservice:
+  signature_ttl: 60s
+  clock_skew: 30s
+  replay_cache_max_entries: 200000
+  trusted_attributes:
+    tenant_id: X-User-Tenant-ID
+  context_limits:
+    user_id_bytes: 128
+    roles: 32
+    role_bytes: 64
+    attributes: 16
+    attribute_value_bytes: 1024
+    total_bytes: 8192
+  callers:
+    my-service:
+      keys:
+      - key_id: my-call-1
+        secret_env: OUTGATE_MY_SERVICE_CALL_KEY
+  recipients:
+    reports-service:
+      active_key_id: gateway-reports-1
+      keys:
+      - key_id: gateway-reports-1
+        secret_file: C:/ProgramData/Outgate/secrets/gateway-reports.key
+  policies:
+  - caller: my-service
+    target: reports-service
+    paths:
+    - /api/v2
+    methods:
+    - GET
+    - POST
+    allow_user_context: true
+    allow_background: true
+  https_addr: :9443
+  allowed_authorities:
+  - gateway.example.com:9443
+  tls:
+    cert_file: C:/ProgramData/Outgate/secrets/gateway.pem
+    key_file: C:/ProgramData/Outgate/secrets/gateway-key.pem
+    client_ca_file: C:/ProgramData/Outgate/secrets/service-ca.pem
+  replay_max_entries_per_caller: 20000
+  caller_rate_per_second: 100
+  caller_burst: 200
+  max_hops: 8
+  identity:
+    issuer: https://identity.example.com/
+    jwks_url: https://identity.example.com/.well-known/jwks.json
+    algorithms:
+    - RS256
+    typ: outgate-delegation+jwt
+    max_token_lifetime: 300s
+    clock_skew: 30s
+    jwks_cache_ttl: 5m
+    unknown_kid_refresh_interval: 30s
+    claims:
+      user_id: sub
+      roles: roles
+      session_id: sid
+      tenant_id: tenant_id
+  internal_only:
+  - target: reports-service
+    paths:
+    - /api/v2/internal
+    methods:
+    - POST
+    callers:
+    - my-service
+routing:
+  strategy: round_robin
+  reserved_api_prefixes:
+  - /api
+  response_header_timeout: 60s
+  body_idle_timeout: 60s
+  request_timeout: 0s
+  max_request_body_bytes: 104857600
+  max_response_body_bytes: 104857600
+  shutdown_timeout: 30s
+websocket:
+  handshake_timeout: 10s
+  idle_timeout: 0s
+  write_timeout: 10s
+observability:
+  addr: 127.0.0.1:9090
+  log_level: info
+auth:
+  mode: mtls_grant
+  service_ca_file: C:/ProgramData/Outgate/secrets/service-ca.pem
+  service_trust_domain: outgate.example
+  certificate_max_lifetime: 24h
+  grant_max_lifetime: 1h
+storage:
+  control:
+    driver: sqlite
+    path: C:/ProgramData/Outgate/gateway/control.db
+    journal_mode: WAL
+    synchronous: FULL
+  replay:
+    driver: sqlite
+    path: C:/ProgramData/Outgate/gateway/replay.db
+    journal_mode: WAL
+    synchronous: FULL
+    namespace: outgate:gateway
+    recovery_barrier: 120s
+security:
+  rate_limits:
+    http_per_second: 1000
+    http_burst: 2000
+    signed_per_second: 1000
+    signed_burst: 2000
+    per_ip_per_second: 20
+    per_ip_burst: 40
+    registrations_per_service_per_minute: 30
+    registrations_per_ip_per_minute: 10
+    websocket_handshakes_per_ip_per_second: 5
+    target_per_second: 100
+    target_burst: 200
+    websocket_messages_per_second: 20
+    websocket_messages_burst: 40
+  resource_limits:
+    external_connections: 5000
+    connections_per_ip: 50
+    streams: 1000
+    streams_per_session: 10
+    tunnels_per_service: 16
+    buffer_bytes_global: 536870912
+    buffer_bytes_per_service: 67108864
+    buffer_bytes_per_tunnel: 16777216
+    concurrency_per_target: 100
+  sessions:
+    max_stream_authorization: 15m
+    revocation_check_interval: 15s
+    close_on_revocation_within: 30s
+    close_on_expiry_within: 5s
+    revocation_publishers:
+    - issuer: https://identity.example.com/
+      certificate_uri: spiffe://outgate.example/identity/session-revoker
+  browser:
+    service_workers_enabled: false
+    api_inline_mime_types:
+    - application/json
+    - application/problem+json
+    cookie_owners:
+      my-session: my-service
+      reports-session: reports-service
+    allowed_origins:
+    - https://gateway.example.com:8443
+    frontend_csp: default-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors
+      'none'
+    cookie_policies:
+      my-session:
+        paths:
+        - /api/v1
+      reports-session:
+        paths:
+        - /api/v2
+admin:
+  addr: 10.0.0.10:9091
+  allowed_cidrs:
+  - 10.0.0.0/24
+  tls:
+    cert_file: C:/ProgramData/Outgate/secrets/admin-server.pem
+    key_file: C:/ProgramData/Outgate/secrets/admin-server-key.pem
+    client_ca_file: C:/ProgramData/Outgate/secrets/admin-ca.pem
+  principals:
+  - id: operator
+    certificate_uri: spiffe://outgate.example/admin/operator
+    token_env: OUTGATE_OPERATOR_TOKEN
+    user_subject: admin-operator-subject
+    bindings:
+    - role: viewer
+      service_ids:
+      - '*'
+    - role: security_admin
+      service_ids:
+      - '*'
+  web_delegation:
+    certificate_uri: spiffe://outgate.example/admin-web
+    issuer: https://admin-identity.example.net/
+    jwks_url: https://admin-identity.example.net/.well-known/jwks.json
+    algorithms:
+    - RS256
+    audience: outgate-admin-api
+    required_acr_values:
+    - urn:outgate:mfa
+    privileged_auth_max_age: 5m
+    role_bindings:
+    - subject: admin-operator-subject
+      role: viewer
+      service_ids:
+      - '*'
+    - subject: admin-operator-subject
+      role: security_admin
+      service_ids:
+      - '*'
+    - subject: release-operator-subject
+      role: viewer
+      service_ids:
+      - my-service
+      - reports-service
+    - subject: release-operator-subject
+      role: deployer
+      service_ids:
+      - my-service
+      - reports-service
+    - subject: observer-subject
+      role: viewer
+      service_ids:
+      - my-service
+  rate_per_second: 20
+  burst: 40
+audit:
+  url: https://audit.example.net/v1/events
+  ca_file: C:/ProgramData/Outgate/secrets/audit-ca.pem
+  token_env: OUTGATE_AUDIT_TOKEN

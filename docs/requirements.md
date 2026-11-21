@@ -855,6 +855,8 @@ TLS 1.3 обязателен для публичного HTTPS и обоих т�
 
 ## 6. Конфигурация шлюза
 
+Структуру и значения по умолчанию задаёт [JSON Schema конфигурации gateway](config.schema.json). Для отдельного процесса BFF используется [схема Admin Web](admin-web.schema.json). Полные примеры для контрактных проверок находятся в [docs/examples](examples) и используют синтетические адреса и ссылки на секреты. Проверка схемы выполняется после разбора YAML и не подставляет значения по умолчанию. Загрузчик дополнительно проверяет связи между полями, байтовые пределы, файлы и доступность зависимостей.
+
 Пример локального development-стенда смешанного режима; он не удовлетворяет production-профилю без обязательных дополнений п. 6.1. Отключение одного адаптера не меняет маршруты и политики другого:
 
 ```yaml
@@ -1305,6 +1307,7 @@ admin_web:
 ### 6.5. Профиль разработчика, bindings и артефакты контрактов
 
 - Все конфигурационные поля документируются в config.schema.json: type/unit/default/range, mode-specific requirements, secret classification, reload policy и зависимости. Unknown/duplicate YAML keys запрещены; duration значения разбираются явно в указанных единицах, implicit boolean/date conversions не меняют тип поля. Есть две команды без сетевого трафика: `config validate` (с разрешением обязательных secret references без вывода значений) и `config explain` (эффективная конфигурация с полным redaction secrets/token/DSN). Их поддерживает gateway/BFF; bootstrap/migrate/recover — обязательные локальные maintenance subcommands, даже если отдельный Admin CLI не поставляется.
+- `config_yaml` в preview и apply Admin API проверяется по [`importCandidate`](config.schema.json#/$defs/importCandidate). Импорт сохраняет отсутствующие настройки и меняет только указанные части control state в разрешённом scope. Изменения ACL требуют preview редактора доступа. Адреса слушателей, параметры подключения к storage, admin bindings и источники ключей остаются в конфигурации запуска.
 - Production instance_id и mounts задаются deployment-конфигурацией приложения и передаются SDK; библиотека не угадывает их из hostname. Grant binding включает mounts и generation-пару сертификата, но mount_id не даёт самостоятельного разрешения на prefix. Схема grants и credential-provider exchange документируется без реальных secrets.
 - OIDC role_bindings содержат subject, role, service_ids; issuer берётся из фиксированной web delegation config, не поля браузера. CLI principal содержит список bindings {role, service_ids}, а не неявную глобальную роль. Пример ниже заменяет список role_bindings п. 6.2 целиком; admin-operator явно имеет global viewer/security_admin для bootstrap-оператора, release-operator — только release service scope. Grant release service scope не включает управление trust roots.
 

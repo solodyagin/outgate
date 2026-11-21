@@ -1,0 +1,31 @@
+# Отдельный production BFF для Windows.
+# Синтетические адреса и ссылки на секреты для проверки контракта.
+admin_web:
+  enabled: true
+  addr: 10.0.0.11:9444
+  public_origin: https://outgate-admin.example.net:9444
+  tls:
+    cert_file: C:/ProgramData/Outgate/secrets/admin-web-server.pem
+    key_file: C:/ProgramData/Outgate/secrets/admin-web-server-key.pem
+  oidc:
+    issuer: https://admin-identity.example.net/
+    client_id: outgate-admin-web
+    client_secret_file: C:/ProgramData/Outgate/secrets/admin-web-oidc-client
+    redirect_uri: https://outgate-admin.example.net:9444/auth/callback
+    api_audience: outgate-admin-api
+    required_acr_values:
+    - urn:outgate:mfa
+  session:
+    store: sqlite
+    path: C:/ProgramData/Outgate/admin-web/sessions.db
+    journal_mode: WAL
+    synchronous: FULL
+    encryption_key_file: C:/ProgramData/Outgate/secrets/admin-web-session-key
+    idle_timeout: 15m
+    absolute_timeout: 8h
+    privileged_auth_max_age: 5m
+  admin_api:
+    url: https://outgate-management.internal:9091
+    ca_file: C:/ProgramData/Outgate/secrets/admin-server-ca.pem
+    client_cert_file: C:/ProgramData/Outgate/secrets/admin-web-client.pem
+    client_key_file: C:/ProgramData/Outgate/secrets/admin-web-client-key.pem

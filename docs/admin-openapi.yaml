@@ -905,13 +905,26 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/ChangeValidation'
-            example:
-              operation: route_release
-              candidate:
-                service_id: reports
-                path: /api/reports
-              expected_revision: '7'
-              scope_service_ids: [reports]
+            examples:
+              routeRelease:
+                value:
+                  operation: route_release
+                  candidate:
+                    service_id: reports
+                    path: /api/reports
+                  expected_revision: '7'
+                  scope_service_ids: [reports]
+              configImport:
+                value:
+                  operation: config_import
+                  candidate:
+                    config_yaml: |
+                      services:
+                        reports:
+                          rollout:
+                            stable_version: '1.0.0'
+                  expected_revision: '7'
+                  scope_service_ids: [reports]
       responses:
         '200':
           description: Успешный ответ.
@@ -970,7 +983,8 @@ paths:
               config_yaml: |
                 services:
                   reports:
-                    stable_version: '1.0.0'
+                    rollout:
+                      stable_version: '1.0.0'
               preview_id: BBBBBBBBBBBBBBBBBBBBBA
               expected_revision: '7'
               reason: deploy
@@ -2880,16 +2894,23 @@ components:
         revision:
           $ref: '#/components/schemas/Revision'
       required: [frontend_override, revision]
+    ConfigCandidateYaml:
+      type: string
+      minLength: 1
+      maxLength: 1048576
+      contentMediaType: application/yaml
+      contentSchema:
+        $ref: 'config.schema.json#/$defs/importCandidate'
+      description: |
+        YAML-кандидат изменяемого control state. Сервер ограничивает UTF-8 до 1 MiB, строго разбирает YAML,
+        проверяет схему и валидирует результирующий снимок с учётом revision, preview и scope.
+        Отсутствующие поля сохраняются. Изменение ACL требует preview редактора доступа.
     ImportConfig:
       type: object
       additionalProperties: false
       properties:
         config_yaml:
-          type: string
-          minLength: 1
-          maxLength: 1048576
-          description: YAML-кандидат конфигурации. Сервер проверяет его schema, дубликаты и фактически меняемые объекты; действуют
-            правила явного импорта из ТЗ 3.20, 3.24 и 5.5.6. Секреты передаются ссылками на защищённые источники.
+          $ref: '#/components/schemas/ConfigCandidateYaml'
         scope_service_ids:
           $ref: '#/components/schemas/ServiceScope'
         preview_id:
@@ -3350,11 +3371,7 @@ components:
             additionalProperties: false
             properties:
               config_yaml:
-                type: string
-                minLength: 1
-                maxLength: 1048576
-                description: YAML-кандидат конфигурации. Сервер проверяет его schema, дубликаты и фактически меняемые объекты;
-                  действуют правила явного импорта из ТЗ 3.20, 3.24 и 5.5.6. Секреты передаются ссылками на защищённые источники.
+                $ref: '#/components/schemas/ConfigCandidateYaml'
             required: [config_yaml]
           expected_revision:
             $ref: '#/components/schemas/Revision'
