@@ -1,6 +1,6 @@
 # Разработка сервиса: SDK и выдаваемый boilerplate
 
-Статус: контракт поставки первой версии. Wire-основа SDK (`protocol/v1`) перенесена в отдельный [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk), module path — `github.com/solodyagin/outgate-sdk`. Для шаблона создан отдельный [solodyagin/outgate-service-template](https://github.com/solodyagin/outgate-service-template), локальный checkout — `../outgate-service-template/`. Repository пока пуст; реализация boilerplate, прикладной `outgateclient`, versioned SDK release и работающий gateway ещё отсутствуют. Этот документ не предлагает скачивать несуществующий release.
+Статус: контракт поставки первой версии. Wire-основа SDK (`protocol/v1`) перенесена в отдельный [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk), module path — `github.com/solodyagin/outgate-sdk`. Для шаблона создан отдельный [solodyagin/outgate-service-template](https://github.com/solodyagin/outgate-service-template), локальный checkout — `../outgate-service-template/`. Repository содержит README; реализация boilerplate, прикладной `outgateclient`, versioned SDK release и работающий gateway ещё отсутствуют. SDK также содержит чистую HTTP state machine `wssstate` для проверки WSS credit/EOF/cancel без sockets и handler. Готового подключения к gateway это не предоставляет. Этот документ не предлагает скачивать несуществующий release.
 
 ## 1. Что получает разработчик
 
