@@ -2,7 +2,7 @@
 
 Репозиторий: [solodyagin/outgate](https://github.com/solodyagin/outgate). Реализация [технического задания](docs/requirements.md). Начат этап 1; работающего шлюза и versioned SDK release пока нет.
 
-- `docs/` — нормативные требования, протокол и [статус реализации](docs/implementation-status.md).
+- `docs/` — нормативные требования и протокол.
 - `tests/fixtures/protocol/v1/` — нормативный golden corpus.
 - [outgate-sdk](https://github.com/solodyagin/outgate-sdk) — отдельный Go-модуль `github.com/solodyagin/outgate-sdk`, сейчас только чистый пакет `protocol/v1`.
 - [outgate-service-template](https://github.com/solodyagin/outgate-service-template) — отдельный репозиторий шаблона сервиса; пока пуст, реализация boilerplate ещё не начата.
