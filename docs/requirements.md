@@ -75,7 +75,7 @@
                                   │ QUIC/HTTP3 adapter            │ WSS adapter
                                   │ UDP + TLS 1.3                │ TCP + TLS 1.3
                                   ▲                              ▲
-                            Сервис A + outgateclient           Сервис B + outgateclient
+                            Сервис A + client                  Сервис B + client
                             исходящее соединение           исходящее соединение
 
 Неизвестный /api/... ──► 404
@@ -268,10 +268,10 @@ Admin API работает на отдельном адресе. Development и�
 
 ### 3.10. Публичный API Go-клиента
 
-SDK поставляется отдельным Go module/repository [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk); планируемый прикладной package — `github.com/solodyagin/outgate-sdk/outgateclient`. Сейчас реализован только `protocol/v1`; прикладной API и versioned release ещё отсутствуют. Прикладные сервисы не импортируют код gateway; выдаваемый самостоятельный boilerplate и правила зависимостей описаны в п. 10.3 и [service-development.md](service-development.md).
+SDK поставляется отдельным Go module/repository [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk); планируемый прикладной package — `github.com/solodyagin/outgate-sdk/client`. Сейчас реализован только `protocol/v1`; прикладной API и versioned release ещё отсутствуют. Прикладные сервисы не импортируют код gateway; выдаваемый самостоятельный boilerplate и правила зависимостей описаны в п. 10.3 и [service-development.md](service-development.md).
 
 ```go
-package outgateclient
+package client
 
 // config — внутренняя конфигурация клиента.
 type Option func(*config) error
@@ -378,7 +378,7 @@ type ReconnectPolicy struct {
 
 Клиентский режим по умолчанию production. Для локальных примеров WithSecurityMode("development") задаётся явно; несовпадение режима security-файла и опции отклоняется, порядок опций не разрешает отключить обязательные проверки. WithSecurityConfigFile загружает клиентский поднабор схемы (собственные cert/grant/key sources, issuer, replay/revocation и limits) без административных секретов gateway. Перед Run проверяется его полнота; отсутствие зависимостей не позволяет принимать запросы с пониженным уровнем проверки.
 
-Это спецификация сигнатур, а не готовый файл реализации; необходимые импорты — `context`, `crypto/tls`, `io`, `log/slog`, `net/http`, `time`. Ошибки SDK поддерживают errors.As в *outgateclient.Error и errors.Is для context.Canceled/DeadlineExceeded через Unwrap; Code стабилен в пределах major. Temporary означает возможность явной новой попытки соединения, а не разрешение повторить уже отправленный запрос. `New` валидирует опции до сетевого подключения и копирует изменяемые входные настройки. Неизвестный транспорт, пустая версия, некорректный адрес/путь WSS/лимит должны возвращать ошибку. `WithWSSPath` применим только к WSS; его явное задание при QUIC возвращает ошибку. Контекст `Run` не должен использоваться одновременно для нескольких запусков одного клиента.
+Это спецификация сигнатур, а не готовый файл реализации; необходимые импорты — `context`, `crypto/tls`, `io`, `log/slog`, `net/http`, `time`. Ошибки SDK поддерживают errors.As в *client.Error и errors.Is для context.Canceled/DeadlineExceeded через Unwrap; Code стабилен в пределах major. Temporary означает возможность явной новой попытки соединения, а не разрешение повторить уже отправленный запрос. `New` валидирует опции до сетевого подключения и копирует изменяемые входные настройки. Неизвестный транспорт, пустая версия, некорректный адрес/путь WSS/лимит должны возвращать ошибку. `WithWSSPath` применим только к WSS; его явное задание при QUIC возвращает ошибку. Контекст `Run` не должен использоваться одновременно для нескольких запусков одного клиента.
 
 ### 3.11. Прозрачный WebSocket приложения
 
@@ -1527,7 +1527,7 @@ UI является обязательным проверенным компон
 
 ### 10.1. Пример клиента
 
-Иллюстрация development-использования будущего Go-пакета; module path `github.com/solodyagin/outgate-sdk` соответствует отдельному опубликованному [SDK repository](https://github.com/solodyagin/outgate-sdk). Прикладной `outgateclient` и SDK release ещё не реализованы/не выпущены. Для публичного production дополнительно обязательны bootstrap и зависимости п. 10.8. Тестовый сертификат шлюза должен быть выпущен доверенным для клиента CA. Ниже используется переносимый Ctrl+C для консольного примера; production host wrapper добавляет Linux SIGTERM или Windows SCM Stop по п. 5.4.1.
+Иллюстрация development-использования будущего Go-пакета; module path `github.com/solodyagin/outgate-sdk` соответствует отдельному опубликованному [SDK repository](https://github.com/solodyagin/outgate-sdk). Прикладной `client` и SDK release ещё не реализованы/не выпущены. Для публичного production дополнительно обязательны bootstrap и зависимости п. 10.8. Тестовый сертификат шлюза должен быть выпущен доверенным для клиента CA. Ниже используется переносимый Ctrl+C для консольного примера; production host wrapper добавляет Linux SIGTERM или Windows SCM Stop по п. 5.4.1.
 
 ```go
 package main
@@ -1540,7 +1540,7 @@ import (
     "os/signal"
     "strings"
 
-    "github.com/solodyagin/outgate-sdk/outgateclient"
+    "github.com/solodyagin/outgate-sdk/client"
 )
 
 func main() {
@@ -1555,17 +1555,17 @@ func main() {
         w.WriteHeader(http.StatusOK)
     })
 
-    c, err := outgateclient.New(
+    c, err := client.New(
         "gateway.example.com:7171",
-        outgateclient.WithTransport("quic"),
-        outgateclient.WithSecurityMode("development"),
-        outgateclient.WithServiceID("my-service"),
-        outgateclient.WithVersion("1.4.2"),
-        outgateclient.WithPaths(strings.Split(os.Getenv("OUTGATE_SERVICE_PATHS"), ",")...),
-        outgateclient.WithStripPrefix(true),
-        outgateclient.WithHandler(mux),
-        outgateclient.WithBearerToken(os.Getenv("OUTGATE_SERVICE_TOKEN")),
-        outgateclient.WithMaxConcurrentRequests(100),
+        client.WithTransport("quic"),
+        client.WithSecurityMode("development"),
+        client.WithServiceID("my-service"),
+        client.WithVersion("1.4.2"),
+        client.WithPaths(strings.Split(os.Getenv("OUTGATE_SERVICE_PATHS"), ",")...),
+        client.WithStripPrefix(true),
+        client.WithHandler(mux),
+        client.WithBearerToken(os.Getenv("OUTGATE_SERVICE_TOKEN")),
+        client.WithMaxConcurrentRequests(100),
     )
     if err != nil {
         log.Fatal(err)
@@ -1620,7 +1620,7 @@ outgate/                              # https://github.com/solodyagin/outgate
 
 outgate-sdk/                          # отдельный репозиторий и Go module
 ├── go.mod                        # module github.com/solodyagin/outgate-sdk
-├── outgateclient/                    # единственная прикладная Go API surface
+├── client/                       # единственная прикладная Go API surface
 ├── protocol/v1/                  # wire models/codecs/constants без gateway logic
 ├── internal/
 │   ├── transport/                # исходящее подключение QUIC/WSS
@@ -1644,9 +1644,9 @@ outgate-service-template/             # https://github.com/solodyagin/outgate-se
 └── tests/                        # app handlers/config/start-stop smoke
 ```
 
-- SDK импортируется как `github.com/solodyagin/outgate-sdk/outgateclient`; service go.mod фиксирует опубликованную SemVer-версию SDK. Шлюз не импортируется в прикладное приложение, не копируется в его repository и не нужен на машине разработчика для local mode. Go SDK статически входит в обычный service binary; отдельный SDK daemon/sidecar не требуется.
-- Однонаправленные зависимости: service → SDK/outgateclient; SDK → свой protocol/v1 и независимые библиотеки; gateway → при необходимости только SDK/protocol/v1 с pinned версией. SDK никогда не импортирует gateway, его internal packages, Admin API server, control DB/outbox или administrative UI. Public protocol/v1 содержит только wire types/serialization/чистые protocol helpers, не transport sockets/SQL/RBAC runtime; SDK public API не раскрывает quic-go connection types. Общие wire определения не копируются вручную между репозиториями.
-- Нормативные protocol/schema/golden artifacts версионируются согласованно с релизом; SDK release содержит snapshot совместимого контракта. Gateway использует pinned snapshot/SDK protocol package; кодовые зависимости не образуют цикл. CI проверяет import graph, соответствие golden corpus и совместимость gateway N с SDK N/предыдущим поддерживаемым minor. Старое размещение pkg/outgateclient внутри gateway repository не используется.
+- SDK импортируется как `github.com/solodyagin/outgate-sdk/client`; service go.mod фиксирует опубликованную SemVer-версию SDK. Шлюз не импортируется в прикладное приложение, не копируется в его repository и не нужен на машине разработчика для local mode. Go SDK статически входит в обычный service binary; отдельный SDK daemon/sidecar не требуется.
+- Однонаправленные зависимости: service → SDK/client; SDK → свой protocol/v1 и независимые библиотеки; gateway → при необходимости только SDK/protocol/v1 с pinned версией. SDK никогда не импортирует gateway, его internal packages, Admin API server, control DB/outbox или administrative UI. Public protocol/v1 содержит только wire types/serialization/чистые protocol helpers, не transport sockets/SQL/RBAC runtime; SDK public API не раскрывает quic-go connection types. Общие wire определения не копируются вручную между репозиториями.
+- Нормативные protocol/schema/golden artifacts версионируются согласованно с релизом; SDK release содержит snapshot совместимого контракта. Gateway использует pinned snapshot/SDK protocol package; кодовые зависимости не образуют цикл. CI проверяет import graph, соответствие golden corpus и совместимость gateway N с SDK N/предыдущим поддерживаемым minor. Старое размещение pkg/client внутри gateway repository не используется.
 - Каждый repository имеет собственные go.mod/go.sum, tags, changelog и CI. Gateway может обновляться без обязательного rebuild сервисов в пределах compatibility matrix. SDK major v2 использует обычный Go module suffix /v2; wire protocol major/version сервиса не меняются автоматически вместе с ним. Web build dependencies существуют только в gateway web/admin.
 - go.work допустим только как локальное удобство при соседних checkout; published template/release не содержит обязательных replace на ../outgate-sdk или ../outgate-gateway, file paths разработчика либо обязательного workspace. Чистый checkout с GOWORK=off и доступом к module registry/VCS обязан собираться. Для приватного SDK документируются доступ к VCS и точечный GOPRIVATE, без отключения TLS/checksum для всех dependencies и без tokens в go.mod/URL.
 - Исходный код Outgate самостоятельный; vendored/adapted reverst directory не создаётся. upstream.md хранит только историю архитектурного референса; реальные dependencies/licenses/SBOM ведутся отдельно. Helm и отдельный Admin CLI остаются последующим расширением; обязательные maintenance subcommands предусмотрены в п. 6.5.
@@ -1664,12 +1664,12 @@ import (
     "io"
     "net/http"
 
-    "github.com/solodyagin/outgate-sdk/outgateclient"
+    "github.com/solodyagin/outgate-sdk/client"
 )
 
 func APIHandler(
-    c *outgateclient.Client,
-    authenticate func(*http.Request) (outgateclient.UserContext, error),
+    c *client.Client,
+    authenticate func(*http.Request) (client.UserContext, error),
     gatewayOrigin string, // из конфигурации: https://gateway.example.com:8443
     reportsURL string,    // из конфигурации: https://gateway.example.com:8443/api/v2/reports
 ) (http.Handler, error) {
@@ -1688,8 +1688,8 @@ func APIHandler(
             return
         }
         // Здесь же API проверяет прикладные права пользователя на reports.
-        ctx := outgateclient.WithUserContext(r.Context(), user)
-        ctx = outgateclient.WithTargetService(ctx, "reports-service")
+        ctx := client.WithUserContext(r.Context(), user)
+        ctx = client.WithTargetService(ctx, "reports-service")
         req, err := http.NewRequestWithContext(
             ctx, http.MethodGet, reportsURL, nil,
         )
@@ -1725,7 +1725,7 @@ func APIHandler(
 
 ### 10.6. Настройки монтирования сервиса
 
-Настройки из этого примера принадлежат deployment сервиса и передаются его кодом в outgateclient; это не новые поля YAML шлюза:
+Настройки из этого примера принадлежат deployment сервиса и передаются его кодом в client; это не новые поля YAML шлюза:
 
 ```yaml
 deployment:
@@ -1758,20 +1758,20 @@ import (
     "net/http"
     "os"
 
-    "github.com/solodyagin/outgate-sdk/outgateclient"
+    "github.com/solodyagin/outgate-sdk/client"
 )
 
 // spaHandler предоставляет index.html fallback и корректные asset 404/cache headers.
-func FrontendClient(spaHandler http.Handler) (*outgateclient.Client, error) {
-    return outgateclient.New(
+func FrontendClient(spaHandler http.Handler) (*client.Client, error) {
+    return client.New(
         "gateway.example.com:7171",
-        outgateclient.WithTransport("quic"),
-        outgateclient.WithSecurityMode("development"),
-        outgateclient.WithServiceID("frontend-service"),
-        outgateclient.WithVersion("2026.11.21"),
-        outgateclient.WithPaths("/"),
-        outgateclient.WithHandler(spaHandler),
-        outgateclient.WithBearerToken(os.Getenv("OUTGATE_FRONTEND_TUNNEL_TOKEN")),
+        client.WithTransport("quic"),
+        client.WithSecurityMode("development"),
+        client.WithServiceID("frontend-service"),
+        client.WithVersion("2026.11.21"),
+        client.WithPaths("/"),
+        client.WithHandler(spaHandler),
+        client.WithBearerToken(os.Getenv("OUTGATE_FRONTEND_TUNNEL_TOKEN")),
     )
 }
 ```

@@ -1,15 +1,15 @@
 # Разработка сервиса: SDK и выдаваемый boilerplate
 
-Статус: контракт поставки первой версии. Wire-основа SDK (`protocol/v1`) перенесена в отдельный [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk), module path — `github.com/solodyagin/outgate-sdk`. Для шаблона создан отдельный [solodyagin/outgate-service-template](https://github.com/solodyagin/outgate-service-template), локальный checkout — `../outgate-service-template/`. Repository содержит README; реализация boilerplate, прикладной `outgateclient`, versioned SDK release и работающий gateway ещё отсутствуют. SDK также содержит чистую HTTP state machine `wssstate` для проверки WSS credit/EOF/cancel без sockets и handler. Готового подключения к gateway это не предоставляет. Этот документ не предлагает скачивать несуществующий release.
+Статус: контракт поставки первой версии. Wire-основа SDK (`protocol/v1`) перенесена в отдельный [solodyagin/outgate-sdk](https://github.com/solodyagin/outgate-sdk), module path — `github.com/solodyagin/outgate-sdk`. Для шаблона создан отдельный [solodyagin/outgate-service-template](https://github.com/solodyagin/outgate-service-template), локальный checkout — `../outgate-service-template/`. Repository содержит README; реализация boilerplate, прикладной `client`, versioned SDK release и работающий gateway ещё отсутствуют. SDK также содержит чистую HTTP state machine `wssstate` для проверки WSS credit/EOF/cancel без sockets и handler. Готового подключения к gateway это не предоставляет. Этот документ не предлагает скачивать несуществующий release.
 
 ## 1. Что получает разработчик
 
 По контракту поставки разработчик получает отдельный [outgate-service-template](https://github.com/solodyagin/outgate-service-template), pinned release `outgate-sdk`, README и конфигурационный пример своего service_id. Этот комплект ещё предстоит реализовать и проверить; создание repository не закрывает приёмку boilerplate. Код gateway, административные секреты, deployment-grant issuer и права управления политиками не передаются. Организация может ограничить доступ к gateway repository независимо от SDK/template. Шлюз запускается оператором; разработчик пользуется общим development stand либо проверяет свой handler локально.
 
-Пакет подключения — `github.com/solodyagin/outgate-sdk/outgateclient`, module — `github.com/solodyagin/outgate-sdk`. После реализации `outgateclient` и публикации versioned SDK release dependency устанавливается обычным Go tooling:
+Пакет подключения — `github.com/solodyagin/outgate-sdk/client`, module — `github.com/solodyagin/outgate-sdk`. После реализации `client` и публикации versioned SDK release dependency устанавливается обычным Go tooling:
 
 ```bash
-go get github.com/solodyagin/outgate-sdk/outgateclient@v1.0.0
+go get github.com/solodyagin/outgate-sdk/client@v1.0.0
 ```
 
 Это пример будущей release-команды, не наличие версии в registry. SDK version фиксируется в service go.mod/go.sum; приложение не импортирует gateway. Код SDK собирается вместе с сервисом, отдельного локального SDK process/sidecar нет. Названия Client/New/Run/Close/WithHandler и остальных options определены в requirements.md 3.10.
@@ -23,7 +23,7 @@ Boilerplate — отдельный самодостаточный Go-проек�
 | Часть | Обязательное поведение |
 | :--- | :--- |
 | cmd/service | main/composition root; ошибки запуска, signals, Run/Close, bounded shutdown |
-| internal/app | настройка outgateclient, запуск/ожидание состояния и dependency injection |
+| internal/app | настройка client, запуск/ожидание состояния и dependency injection |
 | internal/config | проверяемые service/instance/version, addresses, transport, paths/mounts, secret file references |
 | internal/handlers | /hello, /health, /ready; обычный http.Handler с локальными URI |
 | internal/auth | integration interfaces для собственной auth/authorization API; protected example deny-by-default |
@@ -50,7 +50,7 @@ Template не включает реализацию QUIC/WSS/HMAC/replay verifie
 
 ## 5. Запуск и остановка
 
-Порядок production host: parse/validate config → открыть собственные зависимости → создать handlers/auth middleware → создать outgateclient → запустить Run → отслеживать WaitReady/Status → обслуживать приложение через tunnel. Приложение не ждёт ready до запуска Run. Startup barrier и waiting credentials показываются как initializing, не как успешная готовность. Для active-passive template передаёт WithReadinessCheck с проверкой только обязательных локальных dependencies; standby не выключает ready.
+Порядок production host: parse/validate config → открыть собственные зависимости → создать handlers/auth middleware → создать client → запустить Run → отслеживать WaitReady/Status → обслуживать приложение через tunnel. Приложение не ждёт ready до запуска Run. Startup barrier и waiting credentials показываются как initializing, не как успешная готовность. Для active-passive template передаёт WithReadinessCheck с проверкой только обязательных локальных dependencies; standby не выключает ready.
 
 Ctrl+C/служебная остановка запрещают новые операции и вызывают SDK Close с 30s deadline. Handler и callbacks обязаны учитывать context cancellation. Установка Windows Service требует OS privileges, штатный runtime — отдельного ограниченного account; никакого LocalSystem по умолчанию. Незавершённые WS/SSE не мигрируют; gateway/SDK сами выполняют bounded drain, приложение не воспроизводит POST на другом instance. Нормальные бизнес-ошибки остаются у handler, transport ошибки разбираются через typed SDK Error.
 
