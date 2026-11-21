@@ -33,6 +33,19 @@ jobs:
       - run: go vet ./...
         env:
           GOWORK: 'off'
+      - name: Check pinned transport and storage dependencies
+        working-directory: tests/dependencies
+        env:
+          GOWORK: 'off'
+          CGO_ENABLED: '0'
+        run: go test -mod=readonly ./...
+      - run: go vet -mod=readonly ./...
+        working-directory: tests/dependencies
+        env:
+          GOWORK: 'off'
+          CGO_ENABLED: '0'
+      - run: python -B verify_sbom.py
+        working-directory: tests/dependencies
       - if: runner.os == 'Linux'
         run: go test -race ./...
         env:

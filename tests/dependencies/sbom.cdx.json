@@ -1,0 +1,633 @@
+{
+  "$schema": "https://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "Outgate dependency smoke tests",
+      "description": "Union of compiled dependencies on linux/amd64 and windows/amd64."
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/coder/websocket@v1.8.15",
+      "name": "github.com/coder/websocket",
+      "version": "v1.8.15",
+      "purl": "pkg:golang/github.com/coder/websocket@v1.8.15",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:6B2JPeOGlpff2Uz6vOEH1Vzpi0iUz20A+lPVhPHtNUA="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/dustin/go-humanize@v1.1.0",
+      "name": "github.com/dustin/go-humanize",
+      "version": "v1.1.0",
+      "purl": "pkg:golang/github.com/dustin/go-humanize@v1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/google/uuid@v1.6.0",
+      "name": "github.com/google/uuid",
+      "version": "v1.6.0",
+      "purl": "pkg:golang/github.com/google/uuid@v1.6.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/jackc/pgpassfile@v1.0.0",
+      "name": "github.com/jackc/pgpassfile",
+      "version": "v1.0.0",
+      "purl": "pkg:golang/github.com/jackc/pgpassfile@v1.0.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/jackc/pgservicefile@v0.0.0-20240606120523-5a60cdf6a761",
+      "name": "github.com/jackc/pgservicefile",
+      "version": "v0.0.0-20240606120523-5a60cdf6a761",
+      "purl": "pkg:golang/github.com/jackc/pgservicefile@v0.0.0-20240606120523-5a60cdf6a761",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/jackc/pgx/v5@v5.13.0",
+      "name": "github.com/jackc/pgx/v5",
+      "version": "v5.13.0",
+      "purl": "pkg:golang/github.com/jackc/pgx/v5@v5.13.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:Hl08k64maU0nrRyVUEbwCnK6/gT0EhMrtAqBHz9/gA4="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/jackc/puddle/v2@v2.2.3",
+      "name": "github.com/jackc/puddle/v2",
+      "version": "v2.2.3",
+      "purl": "pkg:golang/github.com/jackc/puddle/v2@v2.2.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:f8HoREISb3l5eO9coPgK7U3hKLhWGokOFVcThl5jrao="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
+      "name": "github.com/mattn/go-isatty",
+      "version": "v0.0.24",
+      "purl": "pkg:golang/github.com/mattn/go-isatty@v0.0.24",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:tGZZoVgT/KiqK1c8ocVLeDS8BSWMRd47J3Lbz7vsReI="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/ncruces/go-strftime@v1.1.0",
+      "name": "github.com/ncruces/go-strftime",
+      "version": "v1.1.0",
+      "purl": "pkg:golang/github.com/ncruces/go-strftime@v1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:vtPmPWMkb539RGV9WpWT9EwJGvrOCKvMNI4obWL47Hk="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
+      "name": "github.com/quic-go/qpack",
+      "version": "v0.6.0",
+      "purl": "pkg:golang/github.com/quic-go/qpack@v0.6.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:g7W+BMYynC1LbYLSqRt8PBg5Tgwxn214ZZR34VIOjz8="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/quic-go/quic-go@v0.65.0",
+      "name": "github.com/quic-go/quic-go",
+      "version": "v0.65.0",
+      "purl": "pkg:golang/github.com/quic-go/quic-go@v0.65.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:BJQSjdTvLPLmWtaCupUphRbgxgpZhdO/GMpr9Eoe3B4="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
+      "name": "github.com/remyoudompheng/bigfft",
+      "version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "purl": "pkg:golang/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/golang.org/x/crypto@v0.59.0",
+      "name": "golang.org/x/crypto",
+      "version": "v0.59.0",
+      "purl": "pkg:golang/golang.org/x/crypto@v0.59.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:xS2jhqYbzNrpvkWP2YTDf4TJwBy3ykR03i8vFDxEc7c="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/golang.org/x/net@v0.63.0",
+      "name": "golang.org/x/net",
+      "version": "v0.63.0",
+      "purl": "pkg:golang/golang.org/x/net@v0.63.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:HCoTmNh9EpD1PpK8gBNFY4gcTY4N+KQEO8ylfIKqFJ0="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/golang.org/x/sync@v0.25.0",
+      "name": "golang.org/x/sync",
+      "version": "v0.25.0",
+      "purl": "pkg:golang/golang.org/x/sync@v0.25.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:dJnifr0nMV8/SBnBvdo4eSGGnrc3O4FFx6IqvtLcmRs="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/golang.org/x/sys@v0.50.0",
+      "name": "golang.org/x/sys",
+      "version": "v0.50.0",
+      "purl": "pkg:golang/golang.org/x/sys@v0.50.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/golang.org/x/text@v0.44.0",
+      "name": "golang.org/x/text",
+      "version": "v0.44.0",
+      "purl": "pkg:golang/golang.org/x/text@v0.44.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:YItdp/mQNGnsmrgpcdA5yQ3bnRxCfo/Tj/iByGW9GGo="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/modernc.org/libc@v1.80.1",
+      "name": "modernc.org/libc",
+      "version": "v1.80.1",
+      "purl": "pkg:golang/modernc.org/libc@v1.80.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:ejn7HtTV3GknNKbklqWQ1nvUrfX8mTxs1D+xp/JQwy4="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/modernc.org/mathutil@v1.7.1",
+      "name": "modernc.org/mathutil",
+      "version": "v1.7.1",
+      "purl": "pkg:golang/modernc.org/mathutil@v1.7.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:GCZVGXdaN8gTqB1Mf/usp1Y/hSqgI2vAGGP4jZMCxOU="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/modernc.org/memory@v1.12.1",
+      "name": "modernc.org/memory",
+      "version": "v1.12.1",
+      "purl": "pkg:golang/modernc.org/memory@v1.12.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:nFMiWrpStgZczNl6XI9GnIk/rWhYIyHGUaR04pGbp9g="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:golang/modernc.org/sqlite@v1.62.0",
+      "name": "modernc.org/sqlite",
+      "version": "v1.62.0",
+      "purl": "pkg:golang/modernc.org/sqlite@v1.62.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:gMaCjSM1qpl+iOjiWhR1LYP3zqrYDI+5GYLGt6veP2g="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/go-stdlib@1.27.4",
+      "name": "Go standard library",
+      "version": "1.27.4",
+      "purl": "pkg:generic/go-stdlib@1.27.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:generic/sqlite@3.54.1",
+      "name": "SQLite",
+      "version": "3.54.1",
+      "purl": "pkg:generic/sqlite@3.54.1",
+      "licenses": [
+        {
+          "license": {
+            "name": "Public Domain"
+          }
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "website",
+          "url": "https://sqlite.org/copyright.html"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "pkg:golang/modernc.org/sqlite@v1.62.0",
+      "dependsOn": [
+        "pkg:generic/sqlite@3.54.1"
+      ]
+    }
+  ]
+}
