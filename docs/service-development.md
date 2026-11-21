@@ -58,6 +58,8 @@ Ctrl+C/служебная остановка запрещают новые оп�
 
 Оператор заранее создаёт service identity/allowed paths/mount permissions, выдаёт certificate и ограниченный grant, задаёт policies caller→target и user/background delegation, выбирает rollout/active-passive и выделяет тестовый endpoint. Разработчик получает только credentials своего instance и config references, не service/admin CA private keys или global HMAC keyrings. SDK rotation provider обновляет согласованную cert/grant пару через разрешённый deployment process; boilerplate не выпускает grants самостоятельно.
 
+Поставку пар по поколениям и ссылочный формат для файлового источника описывает [контракт ротации credentials](credentials.md).
+
 Примеры token/assertion flow документируются с mock issuer только для test stand. Template не реализует встроенную production password database и не подменяет API authentication gateway role headers. В local mode межсервисный trusted call недоступен без явно настроенного SDK development/production connection.
 
 ## 7. Приёмка boilerplate

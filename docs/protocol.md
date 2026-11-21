@@ -66,6 +66,8 @@ Schema проверяет структуру, но не все межполев�
 
 Проверки: TLS identity → credential binding/expiry/revocation → protocol/limits → service/path/mount permissions → conflicts/duplicate instance → атомарная регистрация всех путей. Никакая частичная регистрация не допускается; rejected register не создаёт discovered version. Отсутствие активированных путей не делает регистрацию невалидной: production paths могут остаться pending.
 
+При атомарной ротации gateway связывает `credential_generation` с выданным grant и возвращает принятое значение в `register_ack`. Порядок выдачи, проверка SPKI и подготовка пары описаны в [контракте credentials](credentials.md).
+
 ### 3.3. Ack / nack
 
 G → S `register_ack` содержит все перечисленные schema поля:

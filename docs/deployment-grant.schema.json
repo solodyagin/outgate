@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://outgate.example/spec/credentials/deployment-grant.schema.json",
+  "title": "Outgate deployment grant binding",
+  "description": "Структура выдаваемого допуска по ТЗ 3.25 и 5.5.1. Семантические и security проверки описаны в credentials.md.",
+  "$ref": "#/$defs/bindingFields",
+  "unevaluatedProperties": false,
+  "$defs": {
+    "serviceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$(?![\\s\\S])",
+      "description": "Настроенный service_id согласно ТЗ 6.1."
+    },
+    "instanceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$(?![\\s\\S])"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^(?=.*\\S)[^\\u0000-\\u001f\\u007f-\\u009f]+$(?![\\s\\S])",
+      "description": "Непробельный идентификатор сборки длиной не более 128 байт UTF-8."
+    },
+    "prefix": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8192,
+      "pattern": "^(?!.*//)(?!.*[/]\\.{1,2}(?:/|$))/[^\\s%?#\\\\\\u0000-\\u001f\\u007f-\\u009f]*$(?![\\s\\S])",
+      "description": "Runtime проверяет байтовый предел, нормализацию префикса и разрешение на корень."
+    },
+    "generation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 20,
+      "pattern": "^(?:[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$(?![\\s\\S])",
+      "description": "Положительное uint64 в десятичной записи."
+    },
+    "spkiSHA256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$(?![\\s\\S])",
+      "description": "SHA-256 DER SubjectPublicKeyInfo leaf certificate."
+    },
+    "artifactDigest": {
+      "type": "string",
+      "minLength": 71,
+      "maxLength": 71,
+      "pattern": "^sha256:[0-9a-f]{64}$(?![\\s\\S])",
+      "description": "Дайджест проверенного образа или release binary."
+    },
+    "grantId": {
+      "type": "string",
+      "minLength": 22,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$(?![\\s\\S])",
+      "description": "Публичный идентификатор. Canonical base64url без padding от не менее 16 случайных байт."
+    },
+    "opaqueGrant": {
+      "type": "string",
+      "minLength": 66,
+      "maxLength": 385,
+      "pattern": "^[A-Za-z0-9_-]{22,128}\\.[A-Za-z0-9_-]{43,256}$(?![\\s\\S])",
+      "description": "Ровно grant_id.secret. Secret содержит минимум 32 случайных байта; обе части кодируются canonical base64url без padding.",
+      "x-outgate-secret": true
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "bindingFields": {
+      "type": "object",
+      "properties": {
+        "service_id": {
+          "$ref": "#/$defs/serviceId"
+        },
+        "instance_id": {
+          "$ref": "#/$defs/instanceId"
+        },
+        "version": {
+          "$ref": "#/$defs/version"
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/prefix"
+          }
+        },
+        "mounts": {
+          "type": "object",
+          "maxProperties": 32,
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9_-]{0,63}$(?![\\s\\S])"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/prefix"
+          },
+          "description": "Значения совпадают с точными элементами paths. Пустой объект соответствует отсутствию mounts в register."
+        },
+        "path_mode": {
+          "enum": [
+            "preserve",
+            "strip"
+          ]
+        },
+        "rewrite_mount_headers": {
+          "type": "boolean"
+        },
+        "spki_sha256": {
+          "$ref": "#/$defs/spkiSHA256"
+        },
+        "artifact_digest": {
+          "$ref": "#/$defs/artifactDigest"
+        },
+        "expires_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "credential_generation": {
+          "$ref": "#/$defs/generation",
+          "description": "Обязательно для атомарной пары. Отсутствует у static и grant-only provider."
+        }
+      },
+      "required": [
+        "service_id",
+        "instance_id",
+        "version",
+        "paths",
+        "mounts",
+        "path_mode",
+        "rewrite_mount_headers",
+        "spki_sha256",
+        "artifact_digest",
+        "expires_at"
+      ],
+      "description": "Поля используются без переименования при выдаче и в публичных метаданных. Полная привязка проверяется при допуске."
+    },
+    "controlRecord": {
+      "type": "object",
+      "allOf": [
+        {
+          "$ref": "#/$defs/bindingFields"
+        }
+      ],
+      "unevaluatedProperties": false,
+      "properties": {
+        "grant_id": {
+          "$ref": "#/$defs/grantId"
+        },
+        "secret_sha256": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 64,
+          "pattern": "^[0-9a-f]{64}$(?![\\s\\S])",
+          "description": "Только SHA-256 от декодированных байт secret, доступен control backend.",
+          "x-outgate-secret": true
+        },
+        "issued_at": {
+          "$ref": "#/$defs/timestamp"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "grant_id",
+        "secret_sha256",
+        "issued_at",
+        "revoked_at"
+      ],
+      "description": "Логическая долговременная запись допуска. Статус expired вычисляется на момент проверки; разметка SQL отдельно."
+    }
+  }
+}

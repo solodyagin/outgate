@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Check the Admin API contract and its examples without running a gateway."""
+import json
 import re
 from pathlib import Path
 
 import yaml
 from jsonschema import Draft202012Validator
 from openapi_spec_validator import validate
+from referencing import Registry, Resource
 
 ROOT = Path(__file__).resolve().parents[1]
+API = ROOT / "docs/admin-openapi.yaml"
 METHODS = {"get", "post", "put", "delete", "patch", "head", "options", "trace"}
 EXPLICIT_ENDPOINT = re.compile(
     r"`(GET|POST|PUT|DELETE) (/admin/[a-z0-9_/{}/-]+)`"
@@ -41,10 +44,15 @@ def resolve(document, value):
 
 
 def value_validator(document):
+    grant_file = API.with_name("deployment-grant.schema.json")
+    grant_schema = json.loads(grant_file.read_text(encoding="utf-8"))
+    registry = Registry().with_resource(grant_file.as_uri(), Resource.from_contents(grant_schema))
+
     def validator(schema):
-        # Preserve OpenAPI's local component pointers when testing a body schema.
+        # Preserve component pointers and resolve sibling schemas without network access.
         return Draft202012Validator(
-            {"allOf": [schema], "components": document["components"]},
+            {"$id": API.as_uri(), "allOf": [schema], "components": document["components"]},
+            registry=registry,
             format_checker=Draft202012Validator.FORMAT_CHECKER,
         )
 
@@ -107,7 +115,8 @@ def verify_operations(document, validator):
                 body = operation["requestBody"]["content"]["application/json"]
                 schema = resolve(document, body["schema"])
                 check({"expected_revision", "reason"} <= set(schema["required"]), f"{label} change fields")
-                check(schema["additionalProperties"] is False, f"{label} unknown request fields")
+                check(schema.get("additionalProperties", schema.get("unevaluatedProperties")) is False,
+                      f"{label} unknown request fields")
         if "requestBody" in operation:
             count += verify_examples(operation["requestBody"]["content"]["application/json"], validator, label)
         for status, ref in operation["responses"].items():
@@ -181,8 +190,8 @@ def verify_rejections(document, validator):
 
 
 def main():
-    document = yaml.load((ROOT / "docs/admin-openapi.yaml").read_text(encoding="utf-8"), Loader=UniqueKeyLoader)
-    validate(document)
+    document = yaml.load(API.read_text(encoding="utf-8"), Loader=UniqueKeyLoader)
+    validate(document, base_uri=API.as_uri())
     validator = value_validator(document)
     operations, count = verify_operations(document, validator)
     for label, response in document["components"]["responses"].items():
