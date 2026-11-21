@@ -4,10 +4,10 @@
 
 ## Точка продолжения
 
-- **Текущая задача:** документация согласована с созданным отдельным repository шаблона сервиса; следующий шаг этапа 1 — модели `request_start`/`response_start` в SDK с проверками headers/URI.
-- **Завершённые шаги:** проверен пустой checkout `/home/pro/Projects/outgate-service-template` с origin `https://github.com/solodyagin/outgate-service-template.git`; обновлены README, ТЗ §10.3, service development и AGENTS.md. Создание repository отделено от реализации и приёмки boilerplate. Ранее перенос SDK зафиксирован коммитами gateway `3498910` и SDK `700880f`; нормативный контракт и snapshot сохранены.
-- **Незавершённая работа:** В template repository нет исходников, go.mod, CI или commits; готовый boilerplate и его приёмка отсутствуют. Versioned SDK release, `outgateclient`, остальные 16 control messages, headers/URI, state machines и подписи ещё не реализованы. Ни один этап целиком не принят.
-- **Проверки текущего шага (2026-11-21):** локальные Git status/origin нового repository, согласованность упоминаний шаблона, относительные Markdown links и `git diff --check` — PASS. Менялись только документы, Go-проверки не повторялись. На предыдущем шаге этой сессии прошли fixture verifier в gateway/SDK, SDK race/vet, побайтовая сверка schema/fixtures и Windows cross-compile; это не native Windows runtime-приёмка. Remote CI и доступность GitHub в текущем шаге не проверялись.
+- **Текущая задача:** защита текущей версии gateway repository от публикации персональных локальных путей; следующий шаг этапа 1 — модели `request_start`/`response_start` в SDK с проверками headers/URI.
+- **Завершённые шаги:** персональный путь checkout и конкретные временные пути заменены переносимыми обозначениями; в AGENTS.md добавлено правило публикации путей, в CI — проверка отслеживаемых текстовых файлов и её тесты. История Git сохранена. Ранее проверен пустой checkout `../outgate-service-template/` с origin `https://github.com/solodyagin/outgate-service-template.git`; согласованы документы о шаблоне. Перенос SDK зафиксирован коммитами gateway `3498910` и SDK `700880f`; нормативный контракт и snapshot сохранены.
+- **Незавершённая работа:** удалённый запуск новой CI-проверки ещё не подтверждён. Ранее опубликованные пути остаются в истории Git. В template repository нет исходников, go.mod, CI или commits; готовый boilerplate и его приёмка отсутствуют. Versioned SDK release, `outgateclient`, остальные 16 control messages, headers/URI, state machines и подписи ещё не реализованы. Ни один этап целиком не принят.
+- **Проверки текущей сессии (2026-11-21):** При подготовке коммита повторно прошли 5 unit tests, fixture verifier и `git diff --check`. Проверка домашних путей в отслеживаемых файлах и отдельно в новых Python-файлах, 5 unit tests, fixture verifier и `git diff --check` — PASS на Linux. Go-код и wire-контракт не менялись; Go-проверки не повторялись. Удалённый CI и native Windows запуск новой проверки в этой сессии не выполнялись. Прежние результаты SDK race/vet и Windows cross-compile относятся к предыдущим сессиям, см. разделы ниже; это не native Windows runtime-приёмка.
 - **Блокеры:** для дальнейшей работы по control messages не выявлены. Шаблон с tunnel integration и pinned SDK требует реализации `outgateclient` и SDK release. До QUIC adapter остаётся обязательным сквозной quic-go spike по ТЗ 2.3.
 - **Следующее действие:** в отдельном SDK checkout прочитать `AGENTS.md` и `docs/implementation-status.md`, сопоставить `request_start`/`response_start` в нормативных protocol/schema/fixtures и добавить модели и строгий decode с проверками headers/URI и негативными/граничными тестами; последующую реализацию boilerplate вести в отдельном template repository по `docs/service-development.md`.
 
@@ -49,24 +49,28 @@
 
 Production запуск не реализован. Отсутствуют sockets, application proxy, credentials verification, durable control/replay/session stores и Admin Web. Инструкций публичного развёртывания на этом этапе нет.
 
+## Проверки документации шаблона сервиса
+
+Предыдущая сессия 2026-11-21: локальные Git status/origin нового repository, согласованность упоминаний шаблона, относительные Markdown links и `git diff --check` — PASS. Менялись только документы, Go-проверки не повторялись. Ранее прошли fixture verifier в gateway/SDK, SDK race/vet, побайтовая сверка schema/fixtures и Windows cross-compile; это не native Windows runtime-приёмка. Remote CI и доступность GitHub на том шаге не проверялись.
+
 ## Проверки переименования
 
 Предыдущая сессия 2026-11-21, Linux amd64 / Go 1.27.4:
 
 - `python3 tests/fixtures/protocol/v1/verify.py` — PASS: 19 control message types, 13 WSS cases, 4 пересчитанных HMAC/tamper vectors, QUIC bootstrap. Полноценная JSON Schema validation и adapter integration этим скриптом не выполняются.
-- Из `outgate-sdk/`: `GOWORK=off GOPROXY=off GOCACHE=/tmp/outgate-go-cache go test -race ./...` и `go vet ./...` с теми же environment flags — PASS; registry не использовался.
-- Windows amd64: `go build ./...` и `go test -c -o /tmp/outgate-rename-8cq10lmc/protocol-windows.test.exe ./protocol/v1` с теми же flags и `GOOS=windows GOARCH=amd64` — PASS. Native Windows runtime-проверка не выполнена.
+- Из `outgate-sdk/`: `GOWORK=off GOPROXY=off go test -race ./...` и `go vet ./...` с теми же environment flags — PASS; использован отдельный временный GOCACHE, registry не использовался.
+- Windows amd64: `go build ./...` и `go test -c -o "${TEMP_DIR}/protocol-windows.test.exe" ./protocol/v1` (здесь `${TEMP_DIR}` обозначает временный каталог) с теми же flags и `GOOS=windows GOARCH=amd64` — PASS. Native Windows runtime-проверка не выполнена.
 - Каждый из четырёх переписанных commits отдельно выгружен в snapshot: fixture verifier и offline `go test ./...` — PASS. Проверены все trees, paths и commit messages: прежних идентификаторов проекта нет. Авторы, даты и порядок коммитов сохранены; SHA изменились. Удалённых repositories/push нет.
 - Контрольные JSON/frame golden bytes и bootstrap credential/frame payload сохранены; изменены только magic, ALPN, signature/header identifiers и соответствующие HMAC. Bootstrap тесты проверяют границы credential, неверный magic и прежний preface, kind, length и UTF-8; прежний preface отклоняется.
-- Относительные Markdown file links и `git diff --check` — PASS. Dependencies не добавлены. Исходная история сохранена отдельно в `/tmp/outgate-rename-8cq10lmc/before-rename.bundle`; это локальная временная резервная копия, не release artifact.
+- Относительные Markdown file links и `git diff --check` — PASS. Dependencies не добавлены. Исходная история сохранена отдельно в локальном Git bundle; это локальная временная резервная копия, не release artifact.
 
 ## Проверки ack/nack
 
 Предыдущая сессия 2026-11-21, Linux amd64 / Go 1.27.4:
 
 - `python3 tests/fixtures/protocol/v1/verify.py` — PASS; нормативные fixtures и schema не изменены. Этот sanity verifier не выполняет полноценную JSON Schema validation.
-- В `outgate-sdk/`: `GOWORK=off GOPROXY=off go test ./...`, `go test -race ./...` и `go vet ./...` с теми же environment flags — PASS. Для всех Go-команд задан `GOCACHE=/tmp/outgate-example-plan-go-cache`, поскольку штатный cache недоступен для записи; registry не использовался.
-- Windows cross-compile с `GOWORK=off GOPROXY=off GOOS=windows GOARCH=amd64` и тем же `GOCACHE`: `go build ./...` и `go test -c -o /tmp/outgate-example-v1-windows.test.exe ./protocol/v1` — PASS. Отдельная сборка production-кода выполнена при подготовке коммита; native Windows runtime-проверка не выполнена.
+- В `outgate-sdk/`: `GOWORK=off GOPROXY=off go test ./...`, `go test -race ./...` и `go vet ./...` с теми же environment flags — PASS. Для всех Go-команд GOCACHE указывал на отдельный временный каталог, поскольку штатный cache недоступен для записи; registry не использовался.
+- Windows cross-compile с `GOWORK=off GOPROXY=off GOOS=windows GOARCH=amd64` и тем же `GOCACHE`: `go build ./...` и `go test -c -o "${TEMP_DIR}/protocol-windows.test.exe" ./protocol/v1` (здесь `${TEMP_DIR}` обозначает временный каталог) — PASS. Отдельная сборка production-кода выполнена при подготовке коммита; native Windows runtime-проверка не выполнена.
 - По 5 секунд fuzz для `FuzzDecodeRegisterAck` и `FuzzDecodeRegisterNack`: `go test ./protocol/v1 -run '^$' -fuzz '^FuzzDecodeRegisterAck$' -fuzztime=5s -parallel=2` и аналогично для nack, с теми же offline/cache flags — PASS (246 и 74 280 запусков соответственно). Короткие прогоны не являются полной приёмкой протокола.
 - `git diff --check` — PASS; проверены новые Go-файлы и форматирование. Изменения ограничены ack/nack, тестами и документацией; зависимости не добавлены. Gateway/transport integration и state machines этим шагом не проверялись.
 
