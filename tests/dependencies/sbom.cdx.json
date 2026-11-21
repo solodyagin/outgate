@@ -337,6 +337,34 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:golang/github.com/solodyagin/outgate-sdk@v0.0.0-20261121185209-2967a45e66e0",
+      "name": "github.com/solodyagin/outgate-sdk",
+      "version": "v0.0.0-20261121185209-2967a45e66e0",
+      "purl": "pkg:golang/github.com/solodyagin/outgate-sdk@v0.0.0-20261121185209-2967a45e66e0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "outgate:go:sum",
+          "value": "h1:vYWupvZvVK6DH+Kc/exq7vACQh5FXimKMzw7SSUCI/Q="
+        },
+        {
+          "name": "outgate:platform",
+          "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:golang/golang.org/x/crypto@v0.59.0",
       "name": "golang.org/x/crypto",
       "version": "v0.59.0",

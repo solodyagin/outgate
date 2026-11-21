@@ -127,6 +127,8 @@ WebSocket Ping каждые 15s, payload — monotonically increasing 8-byte big
 
 ### 5.1. Самостоятельный reverse profile
 
+Результаты проверки транспорта и статус платформенной приёмки приведены в [отчёте QUIC spike](quic-spike.md).
+
 Outgate реализует собственный bootstrap: S открывает регистрационный bidi stream перед reverse HTTP/3, G обрабатывает его отдельно от HTTP/3. Транспортные операции выполняются напрямую через выбранную quic-go, без модулей/файлов/бинарников reverst. Рассмотренный похожий паттерн reverst описан только в [истории референса](upstream.md); его MessagePack codec/ALPN не заимствуются, wire compatibility не требуется.
 
 Outgate v1 задаёт собственный ALPN `outgate-tunnel/1`. Это частный reverse profile, а не публичный стандартный `h3` endpoint: S — QUIC client, но HTTP/3 application server; G — QUIC server, но HTTP/3 application client. Это проектный reverse mapping, который требует собственного compatibility spike. Применяемая HTTP/3 реализация должна поддерживать эту обратную роль. Нельзя объявлять wire совместимым с произвольным browser HTTP/3 client.

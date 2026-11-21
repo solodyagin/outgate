@@ -24,7 +24,6 @@ import (
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/quic-go/quic-go"
-	"github.com/quic-go/quic-go/http3"
 	_ "modernc.org/sqlite"
 )
 
@@ -60,17 +59,11 @@ func loopbackTLS(t *testing.T) (server, client *tls.Config, ca []byte) {
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
 }
 
-// Pin the public API entry points needed for the separate reverse HTTP/3 spike.
-var (
-	_ func(*http3.Transport, *quic.Conn) *http3.ClientConn = (*http3.Transport).NewClientConn
-	_ func(*http3.Server, *quic.Conn) error                = (*http3.Server).ServeQUICConn
-)
-
 func TestQUICBootstrapStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	serverTLS, clientTLS, _ := loopbackTLS(t)
-	serverTLS.NextProtos, clientTLS.NextProtos = []string{"outgate-tunnel/1"}, []string{"outgate-tunnel/1"}
+	serverTLS.NextProtos, clientTLS.NextProtos = []string{tunnelALPN}, []string{tunnelALPN}
 
 	listener, err := quic.ListenAddr("127.0.0.1:0", serverTLS, nil)
 	must(t, err)
@@ -81,7 +74,7 @@ func TestQUICBootstrapStream(t *testing.T) {
 	gateway, err := listener.Accept(ctx)
 	must(t, err)
 	defer gateway.CloseWithError(0, "")
-	if got := gateway.ConnectionState().TLS.NegotiatedProtocol; got != "outgate-tunnel/1" {
+	if got := gateway.ConnectionState().TLS.NegotiatedProtocol; got != tunnelALPN {
 		t.Fatalf("unexpected ALPN %q", got)
 	}
 
