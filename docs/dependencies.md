@@ -1,6 +1,6 @@
 # Зависимости транспорта и хранилищ
 
-Версии закреплены в отдельном тестовом модуле с Go 1.27.4. Адаптеры будут подключать проверенные зависимости в собственных модулях при реализации. Текущий gateway использует SDK `protocol/v1`. [Тестовый go.mod](../tests/dependencies/go.mod), [go.sum](../tests/dependencies/go.sum).
+Версии закреплены в отдельном тестовом модуле с Go 1.27.4. В рабочем checkout SDK первая часть QUIC adapter (`transport/quiccontrol`, bootstrap/stream 0) подключает ту же `quic-go v0.65.0` с security pins `x/net`/`x/crypto`, собственными лицензиями и test SBOM. Полный HTTP/3 adapter и интеграция gateway остаются в работе. Текущий gateway использует закреплённый SDK `protocol/v1`. [Тестовый go.mod](../tests/dependencies/go.mod), [go.sum](../tests/dependencies/go.sum).
 
 | Назначение | Версия | Лицензия модуля | Основание выбора |
 | --- | --- | --- | --- |
