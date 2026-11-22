@@ -342,9 +342,19 @@ func (s *BoundSession) stop(cause error) {
 			cause = sessionstate.ErrState
 		}
 		s.mu.Lock()
+		snapshot := s.model.Snapshot()
+		// After the terminal ack, the model's remaining deadline is security/
+		// credential expiry (drain deadlines were consumed by finish). It must
+		// still preempt a normal close while the carrier is alive.
+		if !snapshot.TransportActive && !snapshot.Deadline.IsZero() && !time.Now().Before(snapshot.Deadline) {
+			cause = sessionstate.ErrSecurity
+		}
 		s.closing = true
 		s.cause = cause
-		if s.model.Snapshot().TransportActive {
+		if errors.Is(cause, sessionstate.ErrSecurity) {
+			s.graceful = false
+			_, _ = s.model.Revoke(time.Now())
+		} else if snapshot.TransportActive {
 			_, _ = s.model.Disconnected(false, time.Now())
 		}
 		_ = s.routes.SetReady(s.handle, false)

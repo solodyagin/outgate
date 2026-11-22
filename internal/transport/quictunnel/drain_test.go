@@ -216,3 +216,50 @@ func TestServiceCannotForgeGatewayFence(t *testing.T) {
 		t.Fatal("service forged a gateway quiescent fence", b.Err())
 	}
 }
+
+func TestRevokeAfterRotationAckPreventsReconnect(t *testing.T) {
+	b, c, r, reg, app := boundPairProfile(t, true, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	makeReady(t, b, c, r, reg, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	must(t, c.Send(ctx, v1.Drain{Type: "drain", CommandID: 81, DeadlineMS: 2000, Code: "credential_rotation"}))
+	message, err := c.Receive(ctx)
+	must(t, err)
+	ack := message.(v1.DrainAck)
+	peerFence(t, ctx, app, ack.Extensions)
+	must(t, c.Send(ctx, v1.Unregister{Type: "unregister", CommandID: 82, DeadlineMS: 1000, Code: "credential_rotation"}))
+	message, err = c.Receive(ctx)
+	must(t, err)
+	if _, ok := message.(v1.UnregisterAck); !ok {
+		t.Fatal(message)
+	}
+	b.Revoke()
+	await(t, b.Done())
+	if !errors.Is(b.Err(), sessionstate.ErrSecurity) || b.Snapshot().Phase != sessionstate.Closed {
+		t.Fatal("revoked terminal session retained reconnect intent", b.Err(), b.Snapshot().Phase)
+	}
+}
+
+func TestLocalCloseAfterAckIsNotGracefulPeerClose(t *testing.T) {
+	b, c, r, reg, app := boundPairProfile(t, true, nil, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(204) }))
+	makeReady(t, b, c, r, reg, 1)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- b.Drain(ctx) }()
+	message, err := c.Receive(ctx)
+	must(t, err)
+	command := message.(v1.Drain)
+	peerFence(t, ctx, app, command.Extensions)
+	must(t, c.Send(ctx, v1.DrainAck{Type: "drain_ack", CommandID: command.CommandID}))
+	must(t, c.Send(ctx, v1.Unregister{Type: "unregister", CommandID: 91, DeadlineMS: 1000, Code: "shutdown"}))
+	message, err = c.Receive(ctx)
+	must(t, err)
+	if _, ok := message.(v1.UnregisterAck); !ok {
+		t.Fatal(message)
+	}
+	must(t, b.Close(ctx))
+	if err := await(t, result); err == nil {
+		t.Fatal("local Close claimed graceful peer completion")
+	}
+}

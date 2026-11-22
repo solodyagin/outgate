@@ -218,9 +218,11 @@ func (s *BoundSession) writerLoop() {
 					case <-s.conn.Context().Done():
 						cause := context.Cause(s.conn.Context())
 						var application *quic.ApplicationError
-						if errors.As(cause, &application) && application.ErrorCode == quiccontrol.CodeNormal {
+						if errors.As(cause, &application) && application.Remote && application.ErrorCode == quiccontrol.CodeNormal {
 							s.mu.Lock()
-							s.graceful = true
+							if !s.closing {
+								s.graceful = true
+							}
 							s.mu.Unlock()
 							s.stop(context.Canceled)
 						} else {
