@@ -133,11 +133,12 @@ type version struct {
 // Session identifies a single registration. An instance ID may be reused after
 // cleanup, but a stale Session handle can never mutate its replacement.
 type Session struct {
-	info       Instance
-	paths      map[string]struct{}
-	ready      bool
-	readySince time.Time
-	draining   bool
+	info           Instance
+	paths          map[string]struct{}
+	ready          bool
+	readySince     time.Time
+	draining       bool
+	transportBound bool
 }
 
 type Instance struct {

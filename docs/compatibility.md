@@ -1,6 +1,6 @@
 # Матрица совместимости Outgate
 
-Состояние на 2026-11-22. Матрица фиксирует совместимость контрактов и проверенной основы этапа 1. Результаты нативного сквозного spike относятся к коммиту `d08dfc1`. У gateway и SDK пока нет опубликованных релизов. SDK carrier `731af09` прошёл native Linux/Windows CI. Ordinary HTTP/3 milestone SDK `4d1d5bb` также прошёл [native Linux/Windows CI](https://github.com/solodyagin/outgate-sdk/actions/runs/45036861734). Gateway transport boundary проверен локально; его новый native CI фиксируется отдельно и не подменяется Windows cross-compile.
+Состояние на 2026-11-22. Матрица фиксирует совместимость контрактов и проверенной основы этапа 1. Результаты нативного сквозного spike относятся к коммиту `d08dfc1`. У gateway и SDK пока нет опубликованных релизов. SDK carrier `731af09` прошёл native Linux/Windows CI. Ordinary HTTP/3 milestone SDK `4d1d5bb` также прошёл [native Linux/Windows CI](https://github.com/solodyagin/outgate-sdk/actions/runs/45036861734). Gateway ordinary HTTP/3 transport `ca28008` прошёл [native CI](https://github.com/solodyagin/outgate/actions/runs/45037269461). NativeStreams lifecycle SDK `5ee439b` прошёл [native Linux/Windows CI](https://github.com/solodyagin/outgate-sdk/actions/runs/45038551182). Новый gateway BoundSession readiness/cleanup проверяется отдельно; Windows cross-compile не подменяет native runtime.
 
 | Область | Зафиксированная версия или профиль | Подтверждение |
 | --- | --- | --- |
@@ -13,7 +13,7 @@
 | SQLite | `modernc.org/sqlite v1.62.0`, ядро 3.54.1, `modernc.org/libc v1.80.1`, без CGO | Smoke-тест WAL/FULL, видимости commit и уникальности. Control/replay/session, миграции и recovery проверяются с адаптером. |
 | PostgreSQL | `github.com/jackc/pgx/v5 v5.13.0` | Проверяется конфигурация клиента `verify-full` с TLS 1.3. Поддерживаемые major/minor версии сервера определит прогон общего SQL-набора. |
 | Redis | Опциональный replay backend | Описана условная конфигурация. Совместимость проверяется при поставке адаптера. |
-| SDK, подключённый gateway | `v0.0.0-20261122151020-4d1d5bb11d38` | Gateway использует `protocol/v1` в модели реестра и `quiccontrol`/`quichttp` в transport boundary. Тестовый модуль закрепляет ту же revision; это версия исходников для сборки. |
+| SDK, подключённый gateway | `v0.0.0-20261122152701-5ee439b3c707` | Gateway использует wire types, QUIC carrier/HTTP и sessionstate NativeStreams для BoundSession readiness/cleanup. Тестовый модуль закрепляет ту же revision; это версия исходников для сборки. |
 | Зависимости и SBOM | Закреплённый граф тестового модуля, CycloneDX для Linux и Windows amd64 | CI сверяет состав тестового бинарника и контрольные суммы. Бинарники релиза получат собственные SBOM. [Версии и лицензии](dependencies.md). |
 
 ## Платформы
