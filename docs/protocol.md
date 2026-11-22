@@ -3,7 +3,7 @@
 | Поле | Значение |
 | :--- | :--- |
 | Статус | Draft; контракт для реализации, не отчёт о работающем адаптере |
-| Protocol major / minor | 1 / 0 |
+| Protocol major / minor | 1 / 1; minor 0 поддерживается без новой capability |
 | Дата | 2026-11-21 |
 | Требования | [requirements.md](requirements.md), разделы 3–6 |
 | Control schema | [protocol.schema.json](protocol.schema.json), JSON Schema Draft 2020-12 |
@@ -52,7 +52,7 @@ Schema проверяет структуру, но не все межполев�
 
 В v1.0 оба участника поддерживают `streaming`, `cancellation`, `duplex_websocket`, `bounded_flow_control`. Они MUST присутствовать и в capabilities, и в required_capabilities register/ack. Дополнительные capabilities v1.0: `mount_discovery`, `credential_generation`; они обязательны для сессии, использующей соответствующую функцию. Формат feature ID: `[a-z][a-z0-9_]{0,63}`, список без дублей, до 32 значений.
 
-`protocol_version` обязан равняться 1. Minor согласуется как minimum двух поддерживаемых minors, capabilities — intersection. Required набор любой стороны обязан входить в intersection. Иначе G отправляет nack unsupported_protocol_version и закрывает session без публикации. S проверяет ack теми же правилами. Несовместимый major не вызывает попытку другого транспорта. Сейчас minor=0; будущие minor добавляют только optional extensions/features.
+`protocol_version` обязан равняться 1. Minor согласуется как minimum двух поддерживаемых minors, capabilities — intersection. Required набор любой стороны обязан входить в intersection. Иначе G отправляет nack unsupported_protocol_version и закрывает session без публикации. S проверяет ack теми же правилами. Несовместимый major не вызывает попытку другого транспорта. Сейчас minor=1; minor 0 остаётся совместимым. В minor 1 добавлена optional capability `quic_quiescent_fence`, не входящая в baseline и WSS. Её использование требует negotiated minor ≥1 и присутствия capability в capabilities и required_capabilities обеих сторон. Без неё native graceful drain этого профиля не используется; отсутствие capability не разрешает fallback транспорта.
 
 ### 3.2. Register
 
@@ -228,6 +228,18 @@ Active-passive readiness: interval=5s, callback timeout=2s, failure_threshold=3,
 | reconnect | G→S: выполнить bounded drain и новое соединение; тот же instance, без одновременной второй session |
 
 G сериализует prior starts перед своим drain_ack; S допускает только уже начатые до этого fence запросы. После ack новые start — protocol_error. S после собственно deadline отменяет остаток; отсутствие ack не продлевает лимит. Gateway shutdown сначала readiness=false/запрет новых requests, затем drain/reconnect, потом cancel остатка/close. Credential rotation использует тот же порядок, но требует нового согласованного snapshot. Revocation не ждёт graceful deadline.
+
+### 8.4. QUIC quiescent fence (minor 1)
+
+Stream 0 и native HTTP/3 requests имеют независимый delivery order. Для согласованной capability `quic_quiescent_fence` G MUST остановить новые HTTP assignments и заморозить выдачу logical request IDs, затем дождаться завершения либо отмены **обоих** направлений всех уже принятых native exchanges. Deadline/security expiry продолжают действовать; если quiescence не достигнута, connection закрывается без fake ack и без replay.
+
+После quiescence G→S `drain`, `drain_ack` и `reconnect` MUST содержать `extensions.quic_quiescent_fence`: canonical u64 decimal string, равный последнему выданному logical `x-tunnel-request-id`, либо `"0"`, если IDs ещё не выдавались. Это не QUIC stream ID, не поле пользовательской identity и не HTTP start/body/end frame на stream 0. Маркер не может увеличиваться после первого fence одной session. S→G команды/ack этот extension не несут. На WSS он не применяется. Codec проверяет форму; negotiated capability, направление и фактическую quiescence проверяет transport/lifecycle.
+
+S после такого G fence закрывает native HTTP admission. Запоздавший stream с новым, ранее не использованным request ID ≤ fence считается уже отменённым G обменом: S MUST reset только этот stream с H3_REQUEST_CANCELLED, не вызывать verifier/handler и не закрывать исправный connection. Повторный ID, некорректный ID либо ID > fence остаётся protocol error. Это позволяет control frame прийти раньше retransmission/reset старого stream и не превращает его в новый business request.
+
+S ждёт завершения своих actual handlers/queues в пределах исходного deadline. Для G-origin drain сначала отправляет drain_ack; для S-origin drain получает G quiescent drain_ack. Затем S может отправить unregister. G отправляет unregister_ack только после исключения Session handle и local cleanup; durable route ownership сохраняется. Передача ack не гарантируется при потере сети; новые sessions/requests не восстанавливают старые операции. Все command IDs/deadlines/ack ledger правила §8.3 сохраняются. Одновременные drain требуют обоих ack; новые deadlines только сокращают оставшийся срок.
+
+Existing minor-0 register/bootstrap/control vectors остаются побайтово неизменными. Отдельный corpus `quic-quiescent-fence.json` задаёт bytes маркера и semantic negatives; JSON Schema не заменяет проверки u64 overflow, negotiation, направления и quiescence.
 
 ## 9. RFC 9421 signature profile
 

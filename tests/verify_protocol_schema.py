@@ -36,6 +36,13 @@ def main():
     for case in cases["negative"]:
         if validator.is_valid(case["message"]):
             raise ValueError(f"Accepted invalid control fixture {case['name']}")
+    fences = read_json(FIXTURES / "quic-quiescent-fence.json")
+    for case in fences["positive"]:
+        validator.validate(case["message"])
+    for case in fences["negative"]:
+        message = {"type": "drain_ack", "command_id": "7", "extensions": case["extensions"]}
+        if validator.is_valid(message) != case["schema_valid"]:
+            raise ValueError(f"Fence schema mismatch: {case['name']}")
 
     print(f"PASS: Draft 2020-12 control schema, {len(covered)} positive types, "
           f"QUIC register and {len(cases['negative'])} negative fixtures")

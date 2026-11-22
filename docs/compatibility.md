@@ -5,7 +5,7 @@
 | Область | Зафиксированная версия или профиль | Подтверждение |
 | --- | --- | --- |
 | Go | 1.27.4 в модулях gateway, SDK и тестов зависимостей | Локальные проверки Linux amd64 и двухплатформенный CI. Поддержка более ранних версий Go пока не исследована. |
-| Tunnel wire | Major 1, minor 0, JSON Schema Draft 2020-12 | [Протокол](protocol.md), [схема](protocol.schema.json) и [golden fixtures](../tests/fixtures/protocol/v1/). Проверяются bytes, codecs и модели состояний. |
+| Tunnel wire | Major 1, minor 1; minor 0 совместим; JSON Schema Draft 2020-12 | [Протокол](protocol.md), [схема](protocol.schema.json) и [golden fixtures](../tests/fixtures/protocol/v1/). Проверяются bytes, codecs и модели состояний. |
 | QUIC / reverse HTTP/3 | `quic-go v0.65.0`, TLS 1.3, ALPN `outgate-tunnel/1`, bidi stream 0 для control | Сквозные тесты на Linux и Windows amd64 охватывают carrier, streaming, отмену и internal CONNECT. [Отчёт](quic-spike.md). |
 | WSS | `coder/websocket v1.8.15`, TLS 1.3, subprotocol `outgate.tunnel.v1`, compression отключён | Smoke-тест binary message и отдельные тесты framing, credit, cancellation и state machine. Сквозной WSS adapter проверяется на этапе 3. |
 | Admin API | API version 1 через `X-Outgate-Admin-API-Version: 1`, спецификация OpenAPI 3.1.0 | Проверяются схема, операции, examples и описание ошибки `unsupported_admin_api_version`. Runtime endpoints проверяются на этапе 4. [OpenAPI](admin-openapi.yaml). |
