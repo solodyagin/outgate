@@ -16,7 +16,7 @@ import (
 	"github.com/solodyagin/outgate/internal/registry"
 )
 
-var ErrControlNotIntegrated = errors.New("outgate: ordered QUIC drain control not integrated")
+var ErrControlNotIntegrated = errors.New("outgate: QUIC quiescent-fence capability not negotiated")
 
 // Binding is supplied only after external identity/grant/permissions/conflicts
 // and required durable commit/outbox checks. Session is a fresh registration
@@ -39,24 +39,40 @@ type BoundOptions struct {
 
 // BoundSession owns status receipt, freshness/security timers, readiness and
 // local native exchange cleanup for one registry registration. Per-request
-// authorization and route selection must precede RoundTrip. Graceful ordered
-// QUIC drain commands are not yet integrated; receiving them closes fail-closed.
+// authorization and route selection must precede RoundTrip. Graceful drain and
+// unregister require negotiated minor-1 quiescent fences; legacy control closes
+// fail-closed rather than inventing cross-stream ordering guarantees.
 type BoundSession struct {
-	mu                          sync.Mutex
-	model                       *sessionstate.State
-	routes                      *registry.Registry
-	handle                      *registry.Session
-	raw                         *Session
-	conn                        *quic.Conn
-	ctx                         context.Context
-	cancel                      context.CancelFunc
-	interval                    time.Duration
-	closing                     bool
-	enabled                     bool
-	cause                       error
-	stopOnce                    sync.Once
-	requests                    sync.WaitGroup
-	done, readerDone, timerDone chan struct{}
+	mu             sync.Mutex
+	model          *sessionstate.State
+	routes         *registry.Registry
+	handle         *registry.Session
+	raw            *Session
+	conn           *quic.Conn
+	ctx            context.Context
+	cancel         context.CancelFunc
+	interval       time.Duration
+	closing        bool
+	enabled        bool
+	cause          error
+	stopOnce       sync.Once
+	requests       sync.WaitGroup
+	done           chan struct{}
+	readerDone     chan struct{}
+	timerDone      chan struct{}
+	writerDone     chan struct{}
+	wake           chan struct{}
+	pending        []nativeControl
+	maxCommands    int
+	fenceCap       bool
+	paused         bool
+	localDrain     bool
+	excluded       bool
+	terminalWrite  bool
+	peerDrain      bool
+	localDrainSent bool
+	graceful       bool
+	watermark      uint64
 }
 
 func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry, options BoundOptions, admit Admit) (*BoundSession, error) {
@@ -82,6 +98,7 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 	}
 	var handle *registry.Session
 	owned := false
+	fenceCap := false
 	raw, err := Accept(ctx, conn, options.Transport, func(ctx context.Context, peer tls.ConnectionState, credential []byte, reg v1.Register) (v1.RegisterAck, error) {
 		now := time.Now()
 		if err := model.Begin(now); err != nil {
@@ -121,6 +138,7 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 		if _, err = model.Security(binding.SecurityReady, binding.SecurityDeadline, now); err != nil {
 			return v1.RegisterAck{}, err
 		}
+		fenceCap = v1.HasQUICQuiescentFence(ack)
 		return ack, nil
 	})
 	if err != nil {
@@ -132,8 +150,14 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
 	s := &BoundSession{model: model, routes: routes, handle: handle, raw: raw, conn: conn, ctx: lifetime, cancel: cancel, interval: options.TickInterval, done: make(chan struct{}), readerDone: make(chan struct{}), timerDone: make(chan struct{})}
+	s.fenceCap = fenceCap
+	s.maxCommands = options.MaxCommands
+	s.pending = make([]nativeControl, 0, options.MaxCommands)
+	s.wake = make(chan struct{}, 1)
+	s.writerDone = make(chan struct{})
 	go s.readLoop()
 	go s.timerLoop()
+	go s.writerLoop()
 	return s, nil
 }
 
@@ -147,6 +171,9 @@ func (s *BoundSession) Snapshot() sessionstate.Snapshot {
 }
 
 func (s *BoundSession) syncReadyLocked() error {
+	if s.excluded {
+		return nil
+	}
 	return s.routes.SetReady(s.handle, s.enabled && !s.closing && s.model.Snapshot().Phase == sessionstate.Ready)
 }
 
@@ -180,24 +207,22 @@ func (s *BoundSession) readLoop() {
 			s.stop(err)
 			return
 		}
-		// Native HTTP/3 starts and stream 0 have independent delivery ordering.
-		// Do not pretend a WSS ordered-writer fence implements QUIC drain.
-		if _, ok := message.(v1.InstanceStatus); !ok {
-			s.stop(ErrControlNotIntegrated)
-			return
-		}
 		s.mu.Lock()
 		if s.closing {
 			s.mu.Unlock()
 			return
 		}
-		effect, err := s.model.Apply(sessionstate.Service, message, time.Now())
+		effect, err, terminal := s.receiveLocked(message)
 		if err == nil {
 			err = s.syncReadyLocked()
 		}
 		s.mu.Unlock()
 		if err != nil || effect.CloseTransport {
 			s.stop(err)
+			return
+		}
+		s.signalWriter()
+		if terminal {
 			return
 		}
 	}
@@ -215,6 +240,10 @@ func (s *BoundSession) timerLoop() {
 			if s.closing {
 				s.mu.Unlock()
 				return
+			}
+			if s.terminalWrite {
+				s.mu.Unlock()
+				continue
 			}
 			effect, err := s.model.Advance(time.Now())
 			if err == nil {
@@ -285,10 +314,12 @@ func (s *BoundSession) RoundTrip(req *http.Request) (*http.Response, error) {
 	return s.raw.requests.RoundTripWithCompletion(req, func() {
 		s.mu.Lock()
 		effect, err := s.model.CompleteNative(lease, time.Now())
-		s.mu.Unlock()
 		s.requests.Done()
+		s.mu.Unlock()
 		if err != nil || effect.CloseTransport {
 			s.stop(err)
+		} else {
+			s.signalWriter()
 		}
 	})
 }
@@ -333,6 +364,7 @@ func (s *BoundSession) cleanup(cause error) {
 	s.requests.Wait()
 	<-s.readerDone
 	<-s.timerDone
+	<-s.writerDone
 	s.mu.Lock()
 	_ = s.routes.Disconnect(s.handle)
 	if err := s.model.Cleaned(time.Now()); err != nil {

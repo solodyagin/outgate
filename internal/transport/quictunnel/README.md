@@ -22,4 +22,12 @@ RoundTrip требует предварительного авторизован
 
 Close(ctx) завершает transport немедленно и ограничивает ожидание local cleanup контекстом. Done означает завершение reader/timer и освобождение native exchanges/registry handle. При upload reader, нарушающем net/http concurrent Close contract, ожидание может истечь, но старый instance остаётся занятым до реального completion; повторная регистрация не обходит cleanup. Удаляется только Session handle, не retained route ownership; stale handles не изменяют replacement.
 
-Graceful drain/unregister/reconnect и ordered starts fence для native QUIC ещё не интегрированы. HTTP/3 requests и stream 0 имеют независимый delivery order: нельзя объявлять WSS writer fence рабочим QUIC fence. Получение таких команд в BoundSession сейчас закрывает connection fail-closed с ErrControlNotIntegrated, без фиктивного ack. Low-level Session остаётся доступен для отдельной реализации control layer. Virtual HTTP/1.1/Hijacker, service-side Client lifecycle и durable production admission остаются будущими шагами.
+## Graceful drain (minor 1)
+
+При negotiated required capability quic_quiescent_fence BoundSession поддерживает S-origin drain/drain_ack/unregister и G-origin Drain(ctx). Admission/ID allocation останавливаются немедленно; writer ждёт NativeActive=0, затем отправляет canonical frozen logical request-ID watermark. Частично завершённый HTTP/upload удерживает lease; deadline/revoke прерывает ожидание и не создаёт fake ack. Control queue ограничена MaxCommands и имеет одного writer; receiver/timer не блокируются на сетевой записи.
+
+Service-side control owner проверяет G marker/command ledger, вызывает SDK Service.Quiesce(ctx, watermark), ждёт actual handler cleanup, подтверждает G-origin drain и отправляет unregister. После unregister_ack закрывает carrier нормально. Gateway исключает session из dispatch/подтверждает native cleanup до ack и сохраняет carrier, занятый instance ID и tunnel quota до нормального peer close в пределах оставшегося deadline. Close(ctx) по-прежнему немедленный, Drain(ctx) ожидает полную graceful последовательность.
+
+Crossed уже переданные drain требуют обоих ack. Ещё не отправленный local drain intent присоединяется к peer drain; повторный Drain только сокращает deadline. Pending routes/ownership не удаляются. Без negotiated capability (включая minor 0) входящие native graceful команды закрывают connection fail-closed, а локальный Drain возвращает ErrControlNotIntegrated без смены transport/security режима.
+
+Service-side public Client/control driver, автоматический reconnect, internal CONNECT/virtual HTTP/1.1/Hijacker и production durable admission остаются следующими этапами. Низкоуровневые Session/SDK primitives не подменяют эти части фиктивной production identity.

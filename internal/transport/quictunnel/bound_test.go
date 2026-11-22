@@ -32,9 +32,22 @@ func eventually(t *testing.T, condition func() bool) {
 }
 
 func boundPair(t *testing.T, mutate func(*v1.RegisterAck), handler http.Handler) (*BoundSession, *quiccontrol.Carrier, *registry.Registry, v1.Register) {
+	b, c, r, reg, _ := boundPairProfile(t, false, mutate, handler)
+	return b, c, r, reg
+}
+
+func boundPairProfile(t *testing.T, fence bool, mutate func(*v1.RegisterAck), handler http.Handler) (*BoundSession, *quiccontrol.Carrier, *registry.Registry, v1.Register, *quichttp.Service) {
 	t.Helper()
 	service, gateway := Pair(t, true, v1.QUICALPN)
 	reg, ack := Fixtures(t, true)
+	if fence {
+		reg.ProtocolMinor = 1
+		ack.ProtocolMinor = 1
+		reg.Capabilities = append(reg.Capabilities, v1.QUICQuiescentFenceCapability)
+		reg.RequiredCapabilities = append(reg.RequiredCapabilities, v1.QUICQuiescentFenceCapability)
+		ack.Capabilities = append(ack.Capabilities, v1.QUICQuiescentFenceCapability)
+		ack.RequiredCapabilities = append(ack.RequiredCapabilities, v1.QUICQuiescentFenceCapability)
+	}
 	routes, err := registry.New(registry.Config{Services: map[string]registry.ServiceConfig{reg.ServiceID: {AllowedPaths: reg.Paths, Rollout: registry.Rollout{Stable: reg.Version}}}})
 	must(t, err)
 	type result struct {
@@ -80,7 +93,7 @@ func boundPair(t *testing.T, mutate func(*v1.RegisterAck), handler http.Handler)
 		_ = app.Close()
 		_ = await(t, served)
 	})
-	return bound, control, routes, reg
+	return bound, control, routes, reg, app
 }
 
 func makeReady(t *testing.T, b *BoundSession, c *quiccontrol.Carrier, r *registry.Registry, reg v1.Register, sequence v1.U64) {

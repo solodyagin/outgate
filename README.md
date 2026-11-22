@@ -16,7 +16,7 @@
 
 Пакет `internal/registry` моделирует владельцев префиксов, версии, rollout, active-passive и выбор маршрута. Он принимает уже авторизованные регистрации и команды с ожидаемой ревизией. Регистрация создаёт сессию без готовности; готовность сообщает управляющий слой. Долговременное состояние, авторизацию, аудит и доставку запроса обеспечивает будущая интеграция gateway. Для проверки путей и регистрации модуль использует закреплённый `protocol/v1` отдельного SDK.
 
-`quictunnel.AcceptBound` связывает transport с registry/sessionstate: единственный status reader, freshness/security/expiry timers, readiness gate, повторная проверка выбранного handle и cleanup после окончания native HTTP exchanges. До готовности и после stale/revoke новые назначения запрещены; route ownership при разрыве сохраняется. Обязательный admission callback предоставляет проверенный допуск и durable решение. Native ordered drain/fence и virtual HTTP/1.1/Hijacker пока не интегрированы.
+`quictunnel.AcceptBound` связывает transport с registry/sessionstate: единственный status reader, freshness/security/expiry timers, readiness gate, повторная проверка выбранного handle и cleanup после окончания native HTTP exchanges. До готовности и после stale/revoke новые назначения запрещены; route ownership при разрыве сохраняется. Обязательный admission callback предоставляет проверенный допуск и durable решение. Для minor 1 negotiated quiescent fence подключает graceful drain/unregister обоих направлений. Service-side public Client/reconnect и virtual HTTP/1.1/Hijacker пока не интегрированы.
 
 ## Проверка
 
