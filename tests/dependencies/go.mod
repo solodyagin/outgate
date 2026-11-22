@@ -6,7 +6,7 @@ require (
 	github.com/coder/websocket v1.8.15
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/quic-go/quic-go v0.65.0
-	github.com/solodyagin/outgate-sdk v0.0.0-20261121185209-2967a45e66e0
+	github.com/solodyagin/outgate-sdk v0.0.0-20261122151020-4d1d5bb11d38
 	modernc.org/sqlite v1.62.0
 )
 

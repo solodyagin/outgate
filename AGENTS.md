@@ -26,6 +26,7 @@
 ## Проверка
 
 - Из корня: `python3 tests/fixtures/protocol/v1/verify.py`.
+- Gateway transport/dependencies: `GOWORK=off go mod verify`, `python3 -B tests/verify_sbom.py`, `GOWORK=off go test -race ./...`, `GOWORK=off go vet ./...`; Windows build/test compile проверяйте отдельно. SDK revision и compiled test inventory должны совпадать с закреплённым module graph, без local replace.
 - Проверка домашних путей в отслеживаемых текстовых файлах: `python3 -B tests/check_local_paths.py`; её тесты: `python3 -B -m unittest discover -s tests -p 'test_check_local_paths.py'`. Проверка выполняется в CI на Linux/Windows, читает рабочие версии файлов из `git ls-files` и сообщает только файл/строку. Новые файлы охватываются после добавления в Git. Это проверка распространённых форм домашних путей, не универсальный поиск персональных данных или проверка истории Git; прочие персональные и временные пути проверяйте при review.
 - SDK (из отдельного checkout, например `../outgate-sdk/`): `GOWORK=off go test -race ./...` и `GOWORK=off go vet ./...`.
 - Для protocol/parser изменений добавляйте негативные и граничные тесты, сверку существующих golden bytes и при необходимости fuzz targets.

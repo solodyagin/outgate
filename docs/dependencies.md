@@ -1,6 +1,8 @@
 # Зависимости транспорта и хранилищ
 
-Версии закреплены в отдельном тестовом модуле с Go 1.27.4. В рабочем checkout SDK первая часть QUIC adapter (`transport/quiccontrol`, bootstrap/stream 0) подключает ту же `quic-go v0.65.0` с security pins `x/net`/`x/crypto`, собственными лицензиями и test SBOM. Полный HTTP/3 adapter и интеграция gateway остаются в работе. Текущий gateway использует закреплённый SDK `protocol/v1`. [Тестовый go.mod](../tests/dependencies/go.mod), [go.sum](../tests/dependencies/go.sum).
+Версии закреплены в gateway и отдельном тестовом модуле с Go 1.27.4. Gateway transport boundary подключает опубликованный SDK `v0.0.0-20261122151020-4d1d5bb11d38` (`quiccontrol`/`quichttp`) и `quic-go v0.65.0` с security pins `x/net`/`x/crypto`. Gateway/SDK ordinary HTTP/3 проверены на реальном mTLS connection; полный lifecycle, WebSocket/Hijacker и registry/security integration остаются в работе. [Gateway go.mod](../go.mod), [тестовый go.mod](../tests/dependencies/go.mod), [тестовый go.sum](../tests/dependencies/go.sum).
+
+Gateway compiled test inventory хранится в [docs/sbom.cdx.json](sbom.cdx.json) и сверяется `python3 -B tests/verify_sbom.py` из корня на Linux/Windows amd64. В нём 7 external modules и Go stdlib; тексты лицензий MIT/BSD-3-Clause находятся в `third-party/`. Это отдельный inventory от transport/storage smoke module и будущего release binary. `go mod verify`, race/vet и vulnerability scan проверяют текущий граф; изменение SDK revision требует синхронного обновления обоих test inventories.
 
 | Назначение | Версия | Лицензия модуля | Основание выбора |
 | --- | --- | --- | --- |
