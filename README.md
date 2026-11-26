@@ -1,5 +1,7 @@
 # Outgate — Reverse API Gateway
 
+Для разработки: [карта контекста](docs/context-map.md) и [локальные проверки](docs/checks.md).
+
 Репозиторий: [solodyagin/outgate](https://github.com/solodyagin/outgate). Реализация [технического задания](docs/requirements.md). Контрактная приёмка этапа 1 пройдена локально. Работающий шлюз и релиз SDK входят в следующие этапы.
 
 - `docs/` — нормативные требования и протокол.

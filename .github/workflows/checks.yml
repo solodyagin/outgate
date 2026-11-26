@@ -27,7 +27,7 @@ jobs:
       - run: python -B tests/verify_config.py
       - run: python -B tests/verify_credentials.py
       - run: python -B tests/verify_discovery.py
-      - run: python -B -m unittest discover -s tests -p "test_check_local_paths.py"
+      - run: python -B -m unittest discover -s tests -p "test_*.py"
       - run: python -B tests/check_local_paths.py
       - run: go mod verify
         env:
