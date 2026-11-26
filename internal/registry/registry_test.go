@@ -106,6 +106,8 @@ func TestAtomicRegistrationAndRetainedOwnership(t *testing.T) {
 		t.Fatalf("unexpected registration: %+v", start)
 	}
 	r.status("/api/orders", "", http.StatusNotFound)
+	r.status("/api/orders", "owner", http.StatusServiceUnavailable)
+	r.status("/api/orders", "unknown", http.StatusForbidden)
 	wantError(t, r.ActivateAuthorized("owner", "/api/orders", r.Revision()), ErrConflict)
 	ok(t, r.SetReady(start.Session, true))
 	r.activate("owner", "/api/orders")

@@ -47,15 +47,18 @@ func (r *Registry) Lookup(rawURI, target string, expected *uint64) Decision {
 	if entry == nil {
 		for reserved := range r.reserved {
 			if v1.MatchesPrefix(reserved, path) {
+				if target != "" {
+					return r.missingTargetRoute(target)
+				}
 				return Decision{Status: http.StatusNotFound}
 			}
 		}
-		if r.frontendOn && r.state(r.frontend, "/") == Active {
+		if r.frontendOn && (target == "" || target == r.frontend) && r.state(r.frontend, "/") == Active {
 			prefix, entry = "/", r.routes["/"]
 		} else if target == "" {
 			return Decision{Upstream: true}
 		} else {
-			return Decision{Status: http.StatusForbidden}
+			return r.missingTargetRoute(target)
 		}
 	}
 
@@ -100,6 +103,13 @@ func (r *Registry) Lookup(rawURI, target string, expected *uint64) Decision {
 		return unavailable(decision)
 	}
 	return decision
+}
+
+func (r *Registry) missingTargetRoute(target string) Decision {
+	if r.services[target] == nil {
+		return Decision{Status: http.StatusForbidden}
+	}
+	return unavailable(Decision{ServiceID: target})
 }
 
 func unavailable(d Decision) Decision {
