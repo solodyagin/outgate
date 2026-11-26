@@ -337,10 +337,10 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:golang/github.com/solodyagin/outgate-sdk@v0.0.0-20261122203205-dfb593d5c065",
+      "bom-ref": "pkg:golang/github.com/solodyagin/outgate-sdk@v0.0.0-20261126181239-489051d183c0",
       "name": "github.com/solodyagin/outgate-sdk",
-      "version": "v0.0.0-20261122203205-dfb593d5c065",
-      "purl": "pkg:golang/github.com/solodyagin/outgate-sdk@v0.0.0-20261122203205-dfb593d5c065",
+      "version": "v0.0.0-20261126181239-489051d183c0",
+      "purl": "pkg:golang/github.com/solodyagin/outgate-sdk@v0.0.0-20261126181239-489051d183c0",
       "licenses": [
         {
           "license": {
@@ -351,7 +351,7 @@
       "properties": [
         {
           "name": "outgate:go:sum",
-          "value": "h1:/D/9pM0cgRwmEc1G6WFs172r/laXMjUntbMYWDtNt/k="
+          "value": "h1:yNRTNY8ALumTYGNItmDzwS1oZqi9m4pv2BmMHqADVVI="
         },
         {
           "name": "outgate:platform",

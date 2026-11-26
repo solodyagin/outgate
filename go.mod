@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/quic-go/quic-go v0.65.0
-	github.com/solodyagin/outgate-sdk v0.0.0-20261122203205-dfb593d5c065
+	github.com/solodyagin/outgate-sdk v0.0.0-20261126181239-489051d183c0
 )
 
 require (

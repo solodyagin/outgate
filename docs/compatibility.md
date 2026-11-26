@@ -13,7 +13,7 @@
 | SQLite | `modernc.org/sqlite v1.62.0`, ядро 3.54.1, `modernc.org/libc v1.80.1`, без CGO | Smoke-тест WAL/FULL, видимости commit и уникальности. Control/replay/session, миграции и recovery проверяются с адаптером. |
 | PostgreSQL | `github.com/jackc/pgx/v5 v5.13.0` | Проверяется конфигурация клиента `verify-full` с TLS 1.3. Поддерживаемые major/minor версии сервера определит прогон общего SQL-набора. |
 | Redis | Опциональный replay backend | Описана условная конфигурация. Совместимость проверяется при поставке адаптера. |
-| SDK, подключённый gateway | `v0.0.0-20261122203205-dfb593d5c065` | Gateway использует wire types, QUIC carrier/HTTP и sessionstate NativeStreams для BoundSession readiness/cleanup и service-side quicsession driver; public Client lifecycle/reconnect доступен через explicit Connect callback. Тестовый модуль закрепляет ту же revision; это версия исходников для сборки. |
+| SDK, подключённый gateway | `v0.0.0-20261126181239-489051d183c0` | Gateway использует wire types, QUIC carrier/HTTP и sessionstate NativeStreams для BoundSession readiness/cleanup и service-side quicsession driver; public Client lifecycle/reconnect поддерживает встроенный QUIC dialer со static/callback credential snapshots либо explicit Connect callback. Тестовый модуль закрепляет ту же revision; это версия исходников для сборки. |
 | Зависимости и SBOM | Закреплённый граф тестового модуля, CycloneDX для Linux и Windows amd64 | CI сверяет состав тестового бинарника и контрольные суммы. Бинарники релиза получат собственные SBOM. [Версии и лицензии](dependencies.md). |
 
 ## Платформы
