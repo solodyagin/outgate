@@ -16,7 +16,7 @@ import (
 )
 
 const schema = `
-CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL CHECK(version=3), epoch BLOB NOT NULL CHECK(length(epoch)=32), revision TEXT NOT NULL) STRICT;
+CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL CHECK(version=4), epoch BLOB NOT NULL CHECK(length(epoch)=32), revision TEXT NOT NULL) STRICT;
 CREATE TABLE credential_revocations(kind TEXT NOT NULL, service_id TEXT NOT NULL, value TEXT NOT NULL, revision TEXT NOT NULL, revoked_at TEXT NOT NULL, PRIMARY KEY(kind,service_id,value)) STRICT;
 CREATE TABLE control_operations(id TEXT PRIMARY KEY, fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32), revision TEXT NOT NULL, revoked_at TEXT NOT NULL) STRICT;
 CREATE TABLE control_outbox(id TEXT PRIMARY KEY REFERENCES control_operations(id), revision TEXT NOT NULL UNIQUE, payload BLOB NOT NULL) STRICT;
@@ -144,10 +144,10 @@ func Initialize(ctx context.Context, config Config) error {
 		return ErrUnavailable
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema+securitySchema+registrationSchema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+securitySchema+registrationSchema+registrySchema); err != nil {
 		return ErrUnavailable
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO control_metadata VALUES(1,3,?,'1')", config.Epoch[:]); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO control_metadata VALUES(1,4,?,'1')", config.Epoch[:]); err != nil {
 		return ErrUnavailable
 	}
 	if err := tx.Commit(); err != nil {
@@ -157,9 +157,9 @@ func Initialize(ctx context.Context, config Config) error {
 }
 
 // Open requires provisioned DB/WAL/owner files, the expected epoch, and schema
-// version 3. Missing/corrupt/restored state is never replaced with an empty DB.
+// version 4. Missing/corrupt/restored state is never replaced with an empty DB.
 func Open(ctx context.Context, config Config) (*Store, error) {
-	return openVersion(ctx, config, 3)
+	return openVersion(ctx, config, 4)
 }
 
 func openVersion(ctx context.Context, config Config, version int) (*Store, error) {
@@ -213,6 +213,13 @@ func openVersion(ctx context.Context, config Config, version int) (*Store, error
 		}
 		if err == nil && version >= 2 {
 			_, err = store.readAccess(ctx, conn)
+		}
+		if err == nil && version >= 4 {
+			revision, metadataErr := store.metadata(ctx, conn)
+			err = metadataErr
+			if err == nil {
+				_, _, err = store.readRegistry(ctx, conn, revision)
+			}
 		}
 		_ = conn.Close()
 	}

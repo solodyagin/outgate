@@ -13,12 +13,18 @@ const registrationSchema = `
 CREATE TABLE registration_generations(instance_id TEXT PRIMARY KEY,service_id TEXT NOT NULL,generation TEXT NOT NULL,grant_id TEXT NOT NULL) STRICT;
 `
 
-// Upgrade explicitly advances provisioned v1/v2 state to v3 under owner lock.
+const registrySchema = `
+CREATE TABLE registry_snapshot(id INTEGER PRIMARY KEY CHECK(id=1), operation_id TEXT NOT NULL, revision TEXT NOT NULL, payload BLOB NOT NULL CHECK(length(payload)<=1048576)) STRICT;
+INSERT INTO registry_snapshot VALUES(1,'','0',X'');
+CREATE INDEX security_results_action ON security_results(action);
+`
+
+// Upgrade explicitly advances provisioned v1/v2/v3 state to v4 under owner lock.
 // Open never migrates implicitly. Network ownership is not restored after restart.
 func Upgrade(ctx context.Context, config Config) error {
 	var store *Store
 	var err error
-	for _, version := range []int{1, 2, 3} {
+	for _, version := range []int{1, 2, 3, 4} {
 		store, err = openVersion(ctx, config, version)
 		if err == nil {
 			break
@@ -28,7 +34,7 @@ func Upgrade(ctx context.Context, config Config) error {
 		return ErrUnavailable
 	}
 	defer store.Close()
-	if store.version == 3 {
+	if store.version == 4 {
 		return nil
 	}
 	conn, err := store.connection(ctx)
@@ -45,13 +51,16 @@ func Upgrade(ctx context.Context, config Config) error {
 		return err
 	}
 	migration := `ALTER TABLE control_metadata RENAME TO control_metadata_old;
- CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL CHECK(version=3),epoch BLOB NOT NULL CHECK(length(epoch)=32),revision TEXT NOT NULL) STRICT;
- INSERT INTO control_metadata SELECT id,3,epoch,revision FROM control_metadata_old;
+ CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL CHECK(version=4),epoch BLOB NOT NULL CHECK(length(epoch)=32),revision TEXT NOT NULL) STRICT;
+ INSERT INTO control_metadata SELECT id,4,epoch,revision FROM control_metadata_old;
  DROP TABLE control_metadata_old;`
 	if store.version == 1 {
 		migration += securitySchema
 	}
-	migration += registrationSchema
+	if store.version < 3 {
+		migration += registrationSchema
+	}
+	migration += registrySchema
 	if _, err := tx.ExecContext(ctx, migration); err != nil {
 		return ErrUnavailable
 	}

@@ -236,7 +236,7 @@ func validEvent(event Event) bool {
 		return event.Target.valid()
 	case "grant_issued", "registration_admitted":
 		return event.Target.Kind == "grant_id" && event.Target.valid() && (Target{Kind: "spki_sha256", ServiceID: "audit", Value: event.ObjectDigest}).valid()
-	case "access_replaced":
+	case "access_replaced", registryAction:
 		return event.Target == (Target{}) && (Target{Kind: "spki_sha256", ServiceID: "audit", Value: event.ObjectDigest}).valid()
 	default:
 		return false

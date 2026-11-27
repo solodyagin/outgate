@@ -3,6 +3,8 @@ package controlstate
 import (
 	"errors"
 	"testing"
+
+	"github.com/solodyagin/outgate/internal/registry"
 )
 
 // This constructs the published v1 layout, not a wire fixture. The old mutation
@@ -15,6 +17,8 @@ func legacyDatabase(t *testing.T) (Config, Command, Result) {
 	result, err := s.Revoke(t.Context(), c)
 	must(t, err)
 	_, err = s.db.ExecContext(t.Context(), `BEGIN IMMEDIATE;
+ DROP TABLE registry_snapshot;
+ DROP INDEX security_results_action;
  DROP TABLE registration_generations;
  DROP TABLE security_results;
  DROP TABLE deployment_grants;
@@ -27,6 +31,95 @@ func legacyDatabase(t *testing.T) (Config, Command, Result) {
 	must(t, err)
 	must(t, s.Close())
 	return config, c, result
+}
+
+func TestUpgradeV3PreservesGenerationFenceAndRequiresRegistryBootstrap(t *testing.T) {
+	c := securityConfig(t)
+	s := fixture(t, c)
+	issued, peer, reg := registrationGrant(t, s, 7, "reports-1")
+	lease, err := s.AcquireRegistration(t.Context(), issued.DeploymentGrant, peer, reg)
+	must(t, err)
+	lease.Release()
+	_, err = s.ReplaceAccess(t.Context(), registrationChange(t, s), accessRules())
+	must(t, err)
+	revision, err := s.Revision(t.Context())
+	must(t, err)
+	_, err = s.db.ExecContext(t.Context(), `BEGIN IMMEDIATE;
+ DROP TABLE registry_snapshot;
+ DROP INDEX security_results_action;
+ ALTER TABLE control_metadata RENAME TO metadata_v4;
+ CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL CHECK(version=3),epoch BLOB NOT NULL CHECK(length(epoch)=32),revision TEXT NOT NULL) STRICT;
+ INSERT INTO control_metadata SELECT id,3,epoch,revision FROM metadata_v4;
+ DROP TABLE metadata_v4;
+ COMMIT;`)
+	must(t, err)
+	must(t, s.Close())
+	if old, err := Open(t.Context(), c); err == nil {
+		old.Close()
+		t.Fatal("implicitly migrated v3")
+	}
+	must(t, Upgrade(t.Context(), c))
+	must(t, Upgrade(t.Context(), c))
+	if old, err := openVersion(t.Context(), c, 3); err == nil {
+		old.Close()
+		t.Fatal("v3 reader accepted v4")
+	}
+	current, err := Open(t.Context(), c)
+	must(t, err)
+	defer current.Close()
+	assertRevision(t, current, revision)
+	_, err = current.VerifyDeploymentGrant(t.Context(), issued.DeploymentGrant, peer, reg)
+	must(t, err)
+	_, err = current.AuthorizeAccess(t.Context(), "sender", "reports", "POST", "/api/v1/items", false)
+	must(t, err)
+	var generation, grantID string
+	must(t, current.db.QueryRowContext(t.Context(), "SELECT generation,grant_id FROM registration_generations WHERE instance_id=?", reg.InstanceID).Scan(&generation, &grantID))
+	if generation != "7" || grantID != issued.Record.GrantID {
+		t.Fatal("migration lost generation fence")
+	}
+	// Migration does not invent route ownership that old schemas never stored.
+	cfg := registry.Config{FrontendService: c.RootFrontend, Services: make(map[string]registry.ServiceConfig)}
+	for id, paths := range c.Services {
+		cfg.Services[id] = registry.ServiceConfig{AllowedPaths: paths, Rollout: registry.Rollout{Stable: "v1"}}
+	}
+	_, err = current.LoadRegistry(t.Context(), cfg, revision)
+	if !errors.Is(err, ErrRegistryUninitialized) {
+		t.Fatal("migration enabled empty registry", err)
+	}
+	events, err := current.Events(t.Context(), 0, 200)
+	must(t, err)
+	if len(events) != 3 {
+		t.Fatal("migration lost operation/outbox")
+	}
+}
+
+func TestFailedV3UpgradeRollsBackRegistryAddition(t *testing.T) {
+	// A real v3 layout with a conflicting partial v4 table must remain v3.
+	c := securityConfig(t)
+	s := fixture(t, c)
+	_, err := s.db.ExecContext(t.Context(), `BEGIN IMMEDIATE;
+ DROP TABLE registry_snapshot;
+ DROP INDEX security_results_action;
+ ALTER TABLE control_metadata RENAME TO metadata_v4;
+ CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL CHECK(version=3),epoch BLOB NOT NULL CHECK(length(epoch)=32),revision TEXT NOT NULL) STRICT;
+ INSERT INTO control_metadata SELECT id,3,epoch,revision FROM metadata_v4;
+ DROP TABLE metadata_v4;
+ CREATE TABLE registry_snapshot(existing INTEGER);
+ COMMIT;`)
+	must(t, err)
+	must(t, s.Close())
+	if err := Upgrade(t.Context(), c); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("partial schema accepted", err)
+	}
+	old, err := openVersion(t.Context(), c, 3)
+	must(t, err)
+	defer old.Close()
+	assertRevision(t, old, 1)
+	var count int
+	must(t, old.db.QueryRowContext(t.Context(), "SELECT count(*) FROM sqlite_master WHERE name='security_results_action'").Scan(&count))
+	if count != 0 {
+		t.Fatal("failed migration left an index")
+	}
 }
 
 func TestUpgradePreservesLegacyRevocationsOperationsAndOutbox(t *testing.T) {
@@ -109,6 +202,8 @@ func TestUpgradeV2PreservesGrantsAndPolicies(t *testing.T) {
 	revision, err := s.Revision(t.Context())
 	must(t, err)
 	_, err = s.db.ExecContext(t.Context(), `BEGIN IMMEDIATE;
+ DROP TABLE registry_snapshot;
+ DROP INDEX security_results_action;
  DROP TABLE registration_generations;
  ALTER TABLE control_metadata RENAME TO metadata_v3;
  CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL CHECK(version=2),epoch BLOB NOT NULL CHECK(length(epoch)=32),revision TEXT NOT NULL) STRICT;

@@ -1,8 +1,8 @@
-# Durable credential revocations
+# Durable control state
 
 Implements the initial storage part of [requirements §§3.23 and 5.5.1–5.5.2](../../docs/requirements.md), using the target kinds from [Admin API](../../docs/admin-openapi.yaml).
 
-`Initialize` explicitly provisions schema version 3 in a dedicated control database. `Open` requires the existing database, WAL and owner file, a matching independently provisioned epoch, SQLite WAL/FULL, foreign keys and a successful integrity check. Missing, corrupt or unsupported state is rejected. Published v1/v2 installations require explicit `Upgrade(ctx, config)` while stopped: it takes the owner lock and transactionally preserves epoch, revision, revocations, operations and pending outbox, adding missing access/grant/result tables and the registration-generation checkpoint table. Existing v2 access/grants are retained. `Open` never migrates automatically; v1/v2 binaries reject v3 metadata. Repeating Upgrade on valid v3 state is harmless. The epoch is a restore fence supplied by trusted deployment state; detecting an authorized restore and advancing that fence remain deployment responsibilities. Never derive the expected epoch from the database being checked.
+`Initialize` explicitly provisions schema version 4 in a dedicated control database. `Open` requires the existing database, WAL and owner file, a matching independently provisioned epoch, SQLite WAL/FULL, foreign keys and a successful integrity check. Missing, corrupt or unsupported state is rejected. Published v1/v2/v3 installations require explicit `Upgrade(ctx, config)` while stopped: it takes the owner lock and transactionally preserves epoch, revision, revocations, grants/access, generation checkpoints, operations and pending outbox, adding only missing tables and the registry snapshot sentinel. `Open` never migrates automatically; older readers reject v4 metadata. Repeating Upgrade on valid v4 state is harmless. Legacy layouts never persisted route ownership: migration cannot reconstruct it or declare the registry ready. The epoch is a restore fence supplied by trusted deployment state; detecting an authorized restore and advancing that fence remain deployment responsibilities. Never derive the expected epoch from the database being checked.
 
 The process holds an exclusive nonblocking OS lock on the persistent `.owner` file (Linux flock, Windows LockFileEx). A second process is rejected. Do not delete the lock file while running. Operations check database/WAL/owner file identities, and `Close` waits for checked-out operations before releasing ownership. Unsupported operating systems fail closed. Files are provisioned with owner-only Unix permissions; deployment must also set appropriate Windows directory/file ACLs.
 
@@ -29,3 +29,53 @@ Checks cover restart persistence including abrupt process exit without deferred 
 Only one active lease per instance is allowed; different instances are bounded by `Config.MaxRegistrations` (default 1000, maximum 1,000,000). Call Release only after transport/handler cleanup; it is idempotent and a stale release cannot remove a newer owner. Check re-reads current revocations/expiry/generation and confirms that exact lease still owns the instance. Public returned grant metadata cannot alter its private identity. Store.Close returns ErrInstanceInUse while registrations remain, keeping the OS owner lock; stop sessions and retry close. Network ownership is never restored from SQLite after restart. The durable fence survives a process exit/lost ack, and same-pair reconnect remains possible after cleanup. Failed outbox/commit rolls back ownership and generation; an uncertain or successfully committed fence is never rolled back merely because a later registry publication/ack fails. Registry durability/resync must still be supplied by the admission owner.
 
 Migration does not infer generations that a v1/v2 installation never persisted. Before enabling traffic after upgrade, admit the intended current pairs or explicitly revoke obsolete credentials. Registration rate limits, certificate-chain/SPIFFE validation, durable route publication, startup readiness, security-check renewal and revocation fanout belong to the runtime. The QUIC GuardRegistration wrapper supplies the shared TLS identity check and native cleanup attachment, but requires explicit pre-admission and registry-commit callbacks.
+
+
+`CommitRegistry` stores a validated private format-1 registry snapshot, the next
+control revision, a safe operation receipt and audit event in one WAL/FULL
+transaction. `nil` expected registry revision is explicit first bootstrap and
+accepts only an empty revision-0 snapshot. Initialization/upgrade leave a sentinel;
+`LoadRegistry` returns `ErrRegistryUninitialized` until explicit bootstrap. A
+missing sentinel is corruption, never permission to bootstrap again. Subsequent
+commits require both the expected global control revision and the previous
+registry revision, and advance the registry counter by exactly one. Control and
+registry counters are distinct: grants/revocations/access also advance control
+revision. Persisted registry service revisions remain inside the validated blob.
+
+Service allowlists and frontend identity must match the trusted store config.
+`RestoreSnapshot` validates the candidate and previous persisted snapshot; other
+normalized permission policies must match on later commits. The caller remains
+responsible for authenticating/authorizing the entire mutation (scope/MFA/preview,
+including current scope on retries), grant/flow checks, and creating the candidate
+from current state. The storage API alone does not authorize route activation or
+join registration credential verification into that same transaction.
+
+Operation fingerprints include actor/change, bootstrap/expected registry revision
+and the candidate digest. Audit/result records contain only safe digests/revisions,
+never the full snapshot or credentials. Same-key retries return the original
+receipt even after later commits; a different actor/payload/revision conflicts.
+Full/unavailable outbox rolls back the snapshot and both revision/operation state.
+An uncertain commit must be resolved by reading/retrying the same operation; a
+new operation must not be generated automatically.
+
+`LoadRegistry` reads metadata and blob in one transaction. SQL CASE guards limit
+blob allocation to 1 MiB and bound metadata/results before decoding. Reads check
+canonical revisions, SHA-256 and the latest registry operation/result binding;
+an older row cannot silently replace a later committed snapshot. `Open` checks
+the envelope/sentinel, while `LoadRegistry` additionally validates canonical
+registry semantics against the supplied trusted config. Keep the latest registry
+operation/result when future operation retention is implemented, even if its
+outbox event has already been acknowledged.
+
+The load result separates current control revision from the snapshot's commit
+revision and registry mutation counter. An independently retained minimum control
+revision can reject rollback of the entire database; zero supplies no such proof.
+Expected epoch must likewise come from trusted deployment state. Neither an epoch
+stored in the same backup nor hashes prove freshness of an entire restored
+installation. No automatic backup recovery or rollback clearance is provided.
+
+This completes snapshot storage, not live publication. The caller must serialize
+registry mutation/commit/publication, keep existing session handles valid, and
+hold readiness closed after uncertain commit until resync. `RestoreSnapshot` is
+only cold recovery; swapping it into a live transport owner invalidates handles.
+The QUIC registration guard still needs a production commit/publication owner.

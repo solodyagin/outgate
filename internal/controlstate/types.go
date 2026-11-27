@@ -1,5 +1,5 @@
 // Package controlstate persists gateway control mutations. The current schema
-// implements credential revocations, deployment grants and access policies.
+// implements credential revocations, grants, access and registry snapshots.
 package controlstate
 
 import (

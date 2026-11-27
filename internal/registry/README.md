@@ -25,14 +25,16 @@ This private format is independent of tunnel wire, Admin API and SQL schema.
 Only the exact canonical encoding produced by `MarshalSnapshot` is accepted:
 unknown/duplicate/missing fields, trailing data, invalid revisions, noncanonical
 paths and inconsistent ownership/mounts are rejected. Documents are limited to
-1 MiB. The eventual store reader must check SQL blob length before allocation.
+1 MiB. The control-state store checks SQL blob length before allocation.
 Exceeding the encoding budget returns `ErrSnapshot`; it does not discard history.
 
 These functions do **not** make the registry durable. They cannot authenticate
 a document, establish installation epoch, detect rollback to an older snapshot,
 or join a route mutation to a grant/revision/operation/outbox transaction.
 Do not acknowledge `GuardRegistration.Commit` merely after taking a snapshot.
-The publication owner still needs durable commits, bounded reads, revision/epoch
-checks and a fail-closed barrier between uncertain commit and successful resync.
+The [control-state store](../controlstate/README.md) supplies atomic snapshot/
+revision/operation/outbox commits, bounded reads and epoch/watermark checks.
+The publication owner still needs a fail-closed barrier between uncertain commit
+and successful resync, plus admission authorization in the commit transaction.
 It must also keep existing transport session handles valid during publication;
 `RestoreSnapshot` is a cold recovery operation, not a live registry replacement.
