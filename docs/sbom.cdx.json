@@ -60,6 +60,10 @@
         {
           "name": "outgate:platform",
           "value": "linux/amd64"
+        },
+        {
+          "name": "outgate:platform",
+          "value": "windows/amd64"
         }
       ]
     },
