@@ -37,6 +37,10 @@ func boundPair(t *testing.T, mutate func(*v1.RegisterAck), handler http.Handler)
 }
 
 func boundPairProfile(t *testing.T, fence bool, mutate func(*v1.RegisterAck), handler http.Handler) (*BoundSession, *quiccontrol.Carrier, *registry.Registry, v1.Register, *quichttp.Service) {
+	return boundPairProfileRelease(t, fence, mutate, handler, nil)
+}
+
+func boundPairProfileRelease(t *testing.T, fence bool, mutate func(*v1.RegisterAck), handler http.Handler, release func()) (*BoundSession, *quiccontrol.Carrier, *registry.Registry, v1.Register, *quichttp.Service) {
 	t.Helper()
 	service, gateway := Pair(t, true, v1.QUICALPN)
 	reg, ack := Fixtures(t, true)
@@ -73,7 +77,7 @@ func boundPairProfile(t *testing.T, fence bool, mutate func(*v1.RegisterAck), ha
 			if mutate != nil {
 				mutate(&ack)
 			}
-			return Binding{Session: registered.Session, Ack: ack, SecurityReady: true}, nil
+			return Binding{Session: registered.Session, Ack: ack, SecurityReady: true, Release: release}, nil
 		})
 		accepted <- result{s, err}
 	}()
@@ -346,11 +350,12 @@ func (b *blockedCloseBody) Close() error {
 }
 
 func TestBoundCleanupRetainsDuplicateIDUntilUploadReleased(t *testing.T) {
-	b, c, r, reg := boundPair(t, nil, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	var admissionReleased atomic.Int32
+	b, c, r, reg, _ := boundPairProfileRelease(t, false, nil, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(200)
 		w.(http.Flusher).Flush()
 		<-req.Context().Done()
-	}))
+	}), func() { admissionReleased.Add(1) })
 	makeReady(t, b, c, r, reg, 1)
 	body := &blockedCloseBody{released: make(chan struct{}), closing: make(chan struct{})}
 	var releaseOnce sync.Once
@@ -367,6 +372,9 @@ func TestBoundCleanupRetainsDuplicateIDUntilUploadReleased(t *testing.T) {
 		t.Fatal("uncooperative upload cleanup was not bounded", err)
 	}
 	await(t, body.closing)
+	if admissionReleased.Load() != 0 {
+		t.Fatal("admission owner released during blocked upload cleanup")
+	}
 	if _, err = r.RegisterAuthorized(reg, registry.QUIC); err != registry.ErrDuplicate {
 		t.Fatal("replacement admitted before cleanup", err)
 	}
@@ -377,6 +385,9 @@ func TestBoundCleanupRetainsDuplicateIDUntilUploadReleased(t *testing.T) {
 	}
 	release()
 	await(t, b.Done())
+	if admissionReleased.Load() != 1 {
+		t.Fatal("admission owner was not released after cleanup")
+	}
 	replacement, err := r.RegisterAuthorized(reg, registry.QUIC)
 	must(t, err)
 	must(t, r.Disconnect(replacement.Session))

@@ -24,6 +24,7 @@ var ErrControlNotIntegrated = errors.New("outgate: QUIC quiescent-fence capabili
 // local security-store assertion, default false. No production RAM fallback is
 // supplied here. An admission callback must clean up its own failed transaction.
 type Binding struct {
+	Release          func() // releases admission ownership after actual local cleanup
 	Session          *registry.Session
 	Ack              v1.RegisterAck
 	SecurityReady    bool
@@ -55,6 +56,7 @@ type BoundSession struct {
 	closing        bool
 	enabled        bool
 	cause          error
+	release        func()
 	stopOnce       sync.Once
 	requests       sync.WaitGroup
 	done           chan struct{}
@@ -98,6 +100,7 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 	}
 	var handle *registry.Session
 	owned := false
+	var release func()
 	fenceCap := false
 	raw, err := Accept(ctx, conn, options.Transport, func(ctx context.Context, peer tls.ConnectionState, credential []byte, reg v1.Register) (v1.RegisterAck, error) {
 		now := time.Now()
@@ -110,6 +113,7 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 		b, _ := json.Marshal(reg)
 		original, _ := v1.DecodeRegister(b)
 		binding, err := admit(ctx, peer, credential, reg)
+		release = binding.Release
 		if err != nil {
 			return v1.RegisterAck{}, err
 		}
@@ -146,10 +150,15 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 			_ = routes.SetReady(handle, false)
 			_ = routes.Disconnect(handle)
 		}
+		if release != nil {
+			_ = conn.CloseWithError(quiccontrol.CodeProtocol, "admission_failed")
+			release()
+		}
 		return nil, err
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
 	s := &BoundSession{model: model, routes: routes, handle: handle, raw: raw, conn: conn, ctx: lifetime, cancel: cancel, interval: options.TickInterval, done: make(chan struct{}), readerDone: make(chan struct{}), timerDone: make(chan struct{})}
+	s.release = release
 	s.fenceCap = fenceCap
 	s.maxCommands = options.MaxCommands
 	s.pending = make([]nativeControl, 0, options.MaxCommands)
@@ -381,5 +390,8 @@ func (s *BoundSession) cleanup(cause error) {
 		s.cause = err
 	}
 	s.mu.Unlock()
+	if s.release != nil {
+		s.release()
+	}
 	close(s.done)
 }

@@ -234,7 +234,7 @@ func validEvent(event Event) bool {
 	switch event.Action {
 	case "":
 		return event.Target.valid()
-	case "grant_issued":
+	case "grant_issued", "registration_admitted":
 		return event.Target.Kind == "grant_id" && event.Target.valid() && (Target{Kind: "spki_sha256", ServiceID: "audit", Value: event.ObjectDigest}).valid()
 	case "access_replaced":
 		return event.Target == (Target{}) && (Target{Kind: "spki_sha256", ServiceID: "audit", Value: event.ObjectDigest}).valid()

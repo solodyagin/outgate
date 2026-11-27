@@ -17,6 +17,7 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -58,12 +59,19 @@ func Fixtures(t *testing.T, production bool) (v1.Register, v1.RegisterAck) {
 }
 
 func Pair(t *testing.T, mutual bool, alpn string) (*quic.Conn, *quic.Conn) {
+	return pairWithIdentity(t, mutual, alpn, nil)
+}
+
+func pairWithIdentity(t *testing.T, mutual bool, alpn string, identity *url.URL) (*quic.Conn, *quic.Conn) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	must(t, err)
 	template := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour),
 		IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth}, IsCA: true, BasicConstraintsValid: true}
+	if identity != nil {
+		template.URIs = []*url.URL{identity}
+	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	must(t, err)
 	cert, err := x509.ParseCertificate(der)

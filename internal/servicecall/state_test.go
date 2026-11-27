@@ -417,3 +417,26 @@ func TestStateAdmissionCopiesAcceptedKeyMaterial(t *testing.T) {
 		t.Fatal("key mutation escaped lookup snapshot")
 	}
 }
+
+func TestStateAdmissionRejectsFencedCallerGeneration(t *testing.T) {
+	s := newStateFixture(t, CallerLimit{PerSecond: 100, Burst: 100})
+	binding := s.grant.GrantBinding
+	binding.CredentialGeneration = 1
+	issued, err := s.store.IssueGrant(t.Context(), stateChange(t, s.store), binding)
+	must(t, err)
+	generation := v1.U64(1)
+	capabilities := append(v1.BaselineCapabilities(), "credential_generation")
+	reg := v1.Register{Type: "register", ProtocolVersion: 1, ProtocolMinor: 1, Capabilities: capabilities, RequiredCapabilities: capabilities, ServiceID: binding.ServiceID, InstanceID: binding.InstanceID, Version: binding.Version, Paths: binding.Paths, PathMode: binding.PathMode, RewriteMountHeaders: binding.RewriteMountHeaders, CredentialGeneration: &generation, MaxConcurrentRequests: 1}
+	cert := s.f.clientTLS.Certificates[0].Leaf
+	identity := controlstate.GrantPeer{ServiceID: callerID, InstanceID: "sender-1", SPKI: binding.SPKI, CertificateSerial: cert.SerialNumber.Text(16)}
+	lease, err := s.store.AcquireRegistration(t.Context(), issued.DeploymentGrant, identity, reg)
+	must(t, err)
+	t.Cleanup(lease.Release)
+	address, client := s.server(t)
+	send(t, client, s.request(t, address, publicURI), 401) // old static grant is now fenced
+	if s.f.replay.count() != 0 || s.f.calls.Load() != 0 {
+		t.Fatal("old generation reached dispatch")
+	}
+	s.grant = issued.Record
+	send(t, client, s.request(t, address, publicURI), 200)
+}

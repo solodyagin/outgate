@@ -23,12 +23,13 @@ var (
 
 type Config struct {
 	// Services is the trusted configured registration path allowlist.
-	Services        map[string][]string
-	RootFrontend    string
-	Path            string
-	Epoch           [32]byte // independently provisioned installation identity
-	MaxOutboxEvents int      // default 100000
-	MaxOutboxBytes  int64    // default 256 MiB
+	Services         map[string][]string
+	RootFrontend     string
+	Path             string
+	Epoch            [32]byte // independently provisioned installation identity
+	MaxRegistrations int      // default 1000 active instance owners
+	MaxOutboxEvents  int      // default 100000
+	MaxOutboxBytes   int64    // default 256 MiB
 }
 
 type Target struct {

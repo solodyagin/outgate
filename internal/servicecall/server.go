@@ -3,14 +3,12 @@ package servicecall
 
 import (
 	"context"
-	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"net/http"
 	"net/http/httputil"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +17,7 @@ import (
 	"github.com/solodyagin/outgate-sdk/delivery"
 	"github.com/solodyagin/outgate-sdk/httpsig"
 	v1 "github.com/solodyagin/outgate-sdk/protocol/v1"
+	"github.com/solodyagin/outgate/internal/peeridentity"
 	"github.com/solodyagin/outgate/internal/registry"
 )
 
@@ -28,11 +27,7 @@ var (
 	ErrRateLimited = errors.New("outgate: service call rate limited")
 )
 
-type Peer struct {
-	ServiceID, InstanceID string
-	SPKI                  [32]byte
-	Certificate           *x509.Certificate // read-only verified leaf
-}
+type Peer = peeridentity.Peer
 
 type Call struct {
 	Peer                          Peer
@@ -110,9 +105,7 @@ func NewServer(config Config) (*http.Server, error) {
 		}
 		authorities[host] = struct{}{}
 	}
-	authority, err := url.Parse("spiffe://" + config.TrustDomain)
-	if err != nil || authority.Hostname() == "" || authority.Hostname() != config.TrustDomain ||
-		authority.String() != "spiffe://"+config.TrustDomain || strings.ContainsAny(config.TrustDomain, ":[]") ||
+	if !peeridentity.ValidTrustDomain(config.TrustDomain) ||
 		len(config.Certificate.Certificate) == 0 || config.Certificate.PrivateKey == nil || config.ClientRoots == nil ||
 		config.Routes == nil || config.Replay == nil || !httpsig.ValidReplayNamespace(config.ReplayNamespace) ||
 		config.Authenticate == nil || config.Authorize == nil || config.Resolve == nil {
@@ -313,43 +306,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func verifiedPeer(state *tls.ConnectionState, domain string, now time.Time) (Peer, bool) {
-	if state == nil || !state.HandshakeComplete || state.Version < tls.VersionTLS13 || len(state.VerifiedChains) == 0 ||
-		len(state.VerifiedChains[0]) == 0 || len(state.PeerCertificates) == 0 {
-		return Peer{}, false
-	}
-	cert := state.PeerCertificates[0]
-	if cert == nil || !cert.Equal(state.VerifiedChains[0][0]) || cert.NotAfter.Sub(cert.NotBefore) > 24*time.Hour ||
-		now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) {
-		return Peer{}, false
-	}
-	var result Peer
-	for _, uri := range cert.URIs {
-		if uri.Scheme != "spiffe" || uri.Host != domain {
-			continue
-		}
-		parts := strings.Split(uri.Path, "/")
-		if result.Certificate != nil || uri.RawPath != "" || uri.User != nil || uri.Opaque != "" || uri.ForceQuery ||
-			uri.RawQuery != "" || uri.Fragment != "" || uri.RawFragment != "" || len(parts) != 5 ||
-			parts[0] != "" || parts[1] != "service" || parts[3] != "instance" ||
-			!validID(parts[2], 64) || !validID(parts[4], 128) {
-			return Peer{}, false
-		}
-		result = Peer{ServiceID: parts[2], InstanceID: parts[4], SPKI: sha256.Sum256(cert.RawSubjectPublicKeyInfo), Certificate: cert}
-	}
-	return result, result.Certificate != nil
+	return peeridentity.Read(state, domain, now)
 }
 
-func validID(id string, limit int) bool {
-	if len(id) == 0 || len(id) > limit {
-		return false
-	}
-	for i, c := range id {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || i > 0 && strings.ContainsRune("._-", c)) {
-			return false
-		}
-	}
-	return true
-}
+func validID(id string, limit int) bool { return peeridentity.ValidID(id, limit) }
 
 func statusFor(err error) int {
 	switch {

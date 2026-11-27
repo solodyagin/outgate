@@ -15,6 +15,7 @@ func legacyDatabase(t *testing.T) (Config, Command, Result) {
 	result, err := s.Revoke(t.Context(), c)
 	must(t, err)
 	_, err = s.db.ExecContext(t.Context(), `BEGIN IMMEDIATE;
+ DROP TABLE registration_generations;
  DROP TABLE security_results;
  DROP TABLE deployment_grants;
  DROP TABLE access_snapshot;
@@ -97,4 +98,42 @@ func TestFailedUpgradeRollsBackMetadataAndTables(t *testing.T) {
 	if count != 0 {
 		t.Fatal("failed migration left partial tables")
 	}
+}
+
+func TestUpgradeV2PreservesGrantsAndPolicies(t *testing.T) {
+	config := securityConfig(t)
+	s := fixture(t, config)
+	issued, p, reg := registrationGrant(t, s, 7, "reports-1")
+	_, err := s.ReplaceAccess(t.Context(), registrationChange(t, s), accessRules())
+	must(t, err)
+	revision, err := s.Revision(t.Context())
+	must(t, err)
+	_, err = s.db.ExecContext(t.Context(), `BEGIN IMMEDIATE;
+ DROP TABLE registration_generations;
+ ALTER TABLE control_metadata RENAME TO metadata_v3;
+ CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL CHECK(version=2),epoch BLOB NOT NULL CHECK(length(epoch)=32),revision TEXT NOT NULL) STRICT;
+ INSERT INTO control_metadata SELECT id,2,epoch,revision FROM metadata_v3;
+ DROP TABLE metadata_v3;
+ COMMIT;`)
+	must(t, err)
+	must(t, s.Close())
+	if _, err := Open(t.Context(), config); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("Open implicitly migrated v2", err)
+	}
+	must(t, Upgrade(t.Context(), config))
+	if old, err := openVersion(t.Context(), config, 2); err == nil {
+		_ = old.Close()
+		t.Fatal("v2 binary opened v3 state")
+	}
+	upgraded, err := Open(t.Context(), config)
+	must(t, err)
+	defer upgraded.Close()
+	assertRevision(t, upgraded, revision)
+	_, err = upgraded.VerifyDeploymentGrant(t.Context(), issued.DeploymentGrant, p, reg)
+	must(t, err)
+	_, err = upgraded.AuthorizeAccess(t.Context(), "sender", "reports", "POST", "/api/v1/items", false)
+	must(t, err)
+	lease, err := upgraded.AcquireRegistration(t.Context(), issued.DeploymentGrant, p, reg)
+	must(t, err)
+	lease.Release()
 }

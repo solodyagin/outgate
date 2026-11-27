@@ -128,6 +128,9 @@ func (s *Store) grantForPeer(ctx context.Context, q queryer, id string, peer Gra
 	if record.ServiceID != peer.ServiceID || record.InstanceID != peer.InstanceID || record.SPKI != peer.SPKI || !time.Now().Before(record.ExpiresAt) {
 		return GrantRecord{}, nil, ErrDenied
 	}
+	if err := s.checkGeneration(ctx, q, record); err != nil {
+		return GrantRecord{}, nil, err
+	}
 	for _, target := range []Target{{Kind: "grant_id", ServiceID: peer.ServiceID, Value: id}, {Kind: "spki_sha256", ServiceID: peer.ServiceID, Value: peer.SPKI}, {Kind: "certificate_serial", ServiceID: peer.ServiceID, Value: peer.CertificateSerial}} {
 		revoked, err := revokedIn(ctx, q, target)
 		if err != nil {
@@ -164,8 +167,27 @@ func (s *Store) GrantForPeer(ctx context.Context, id string, peer GrantPeer) (Gr
 
 // VerifyDeploymentGrant verifies the secret and exact registration binding.
 // Registry publication, one-live-session ownership and generation high-water
-// advancement must join the future registration admission transaction.
+// advancement require AcquireRegistration plus the registry owner transaction.
 func (s *Store) VerifyDeploymentGrant(ctx context.Context, credential string, peer GrantPeer, reg v1.Register) (GrantRecord, error) {
+	conn, err := s.connection(ctx)
+	if err != nil {
+		return GrantRecord{}, err
+	}
+	defer conn.Close()
+	if _, err := s.metadata(ctx, conn); err != nil {
+		return GrantRecord{}, err
+	}
+	record, err := s.verifyDeploymentGrant(ctx, conn, credential, peer, reg)
+	if err != nil {
+		return GrantRecord{}, err
+	}
+	if err := s.checkFiles(); err != nil {
+		return GrantRecord{}, err
+	}
+	return record, nil
+}
+
+func (s *Store) verifyDeploymentGrant(ctx context.Context, q queryer, credential string, peer GrantPeer, reg v1.Register) (GrantRecord, error) {
 	if len(credential) > 385 || reg.Validate() != nil {
 		return GrantRecord{}, ErrDenied
 	}
@@ -177,15 +199,7 @@ func (s *Store) VerifyDeploymentGrant(ctx context.Context, credential string, pe
 	if err != nil || len(secret) < 32 || base64.RawURLEncoding.EncodeToString(secret) != encoded {
 		return GrantRecord{}, ErrDenied
 	}
-	conn, err := s.connection(ctx)
-	if err != nil {
-		return GrantRecord{}, err
-	}
-	defer conn.Close()
-	if _, err := s.metadata(ctx, conn); err != nil {
-		return GrantRecord{}, err
-	}
-	record, hash, err := s.grantForPeer(ctx, conn, id, peer)
+	record, hash, err := s.grantForPeer(ctx, q, id, peer)
 	if err != nil {
 		return GrantRecord{}, err
 	}
@@ -198,9 +212,6 @@ func (s *Store) VerifyDeploymentGrant(ctx context.Context, credential string, pe
 	}
 	if subtle.ConstantTimeCompare(digest[:], hash) != 1 || reg.ServiceID != record.ServiceID || reg.InstanceID != record.InstanceID || reg.Version != record.Version || reg.PathMode != record.PathMode || reg.RewriteMountHeaders != record.RewriteMountHeaders || !slices.Equal(paths, record.Paths) || !maps.Equal(reg.Mounts, record.Mounts) || generation != record.CredentialGeneration {
 		return GrantRecord{}, ErrDenied
-	}
-	if err := s.checkFiles(); err != nil {
-		return GrantRecord{}, err
 	}
 	return record, nil
 }
