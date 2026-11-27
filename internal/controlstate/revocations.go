@@ -173,10 +173,10 @@ func (s *Store) Events(ctx context.Context, after uint64, limit int) ([]Event, e
 			return nil, ErrUnavailable
 		}
 		var event Event
-		if json.Unmarshal(payload, &event) != nil || event.OperationID != id || event.Revision != revision || !event.Target.valid() || event.RevokedAt.IsZero() {
+		if json.Unmarshal(payload, &event) != nil || event.OperationID != id || event.Revision != revision || !validEvent(event) {
 			return nil, ErrUnavailable
 		}
-		if _, err := decodeResult(event.Target, event.Revision, event.RevokedAt.Format(time.RFC3339Nano)); err != nil {
+		if _, err := decodeResult(event.Target, event.Revision, eventTime(event).Format(time.RFC3339Nano)); err != nil {
 			return nil, err
 		}
 		result = append(result, event)
@@ -219,4 +219,26 @@ func (s *Store) Acknowledge(ctx context.Context, operationID string) error {
 		return ErrUnavailable
 	}
 	return s.checkFiles()
+}
+
+func eventTime(event Event) time.Time {
+	if event.Action == "" {
+		return event.RevokedAt
+	}
+	return event.OccurredAt
+}
+func validEvent(event Event) bool {
+	if !clean(event.Actor, 256) || !clean(event.Reason, 512) || eventTime(event).IsZero() {
+		return false
+	}
+	switch event.Action {
+	case "":
+		return event.Target.valid()
+	case "grant_issued":
+		return event.Target.Kind == "grant_id" && event.Target.valid() && (Target{Kind: "spki_sha256", ServiceID: "audit", Value: event.ObjectDigest}).valid()
+	case "access_replaced":
+		return event.Target == (Target{}) && (Target{Kind: "spki_sha256", ServiceID: "audit", Value: event.ObjectDigest}).valid()
+	default:
+		return false
+	}
 }

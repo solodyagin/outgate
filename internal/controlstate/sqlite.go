@@ -16,7 +16,7 @@ import (
 )
 
 const schema = `
-CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL CHECK(version=1), epoch BLOB NOT NULL CHECK(length(epoch)=32), revision TEXT NOT NULL) STRICT;
+CREATE TABLE control_metadata(id INTEGER PRIMARY KEY CHECK(id=1), version INTEGER NOT NULL CHECK(version=2), epoch BLOB NOT NULL CHECK(length(epoch)=32), revision TEXT NOT NULL) STRICT;
 CREATE TABLE credential_revocations(kind TEXT NOT NULL, service_id TEXT NOT NULL, value TEXT NOT NULL, revision TEXT NOT NULL, revoked_at TEXT NOT NULL, PRIMARY KEY(kind,service_id,value)) STRICT;
 CREATE TABLE control_operations(id TEXT PRIMARY KEY, fingerprint BLOB NOT NULL CHECK(length(fingerprint)=32), revision TEXT NOT NULL, revoked_at TEXT NOT NULL) STRICT;
 CREATE TABLE control_outbox(id TEXT PRIMARY KEY REFERENCES control_operations(id), revision TEXT NOT NULL UNIQUE, payload BLOB NOT NULL) STRICT;
@@ -26,6 +26,7 @@ CREATE INDEX control_outbox_revision ON control_outbox(length(revision),revision
 // Store has one OS-locked owner for this installation. No cached security
 // snapshot is returned before commit: reads consult the authoritative database.
 type Store struct {
+	version   int
 	mu        sync.RWMutex // owner lock outlives every checked-out connection
 	closed    bool
 	db        *sql.DB
@@ -51,7 +52,7 @@ func (c Config) normalized() (Config, error) {
 		return Config{}, ErrConfig
 	}
 	c.Path = path
-	return c, nil
+	return normalizeServices(c)
 }
 
 func openDB(path string) *sql.DB {
@@ -139,10 +140,10 @@ func Initialize(ctx context.Context, config Config) error {
 		return ErrUnavailable
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, schema); err != nil {
+	if _, err := tx.ExecContext(ctx, schema+securitySchema); err != nil {
 		return ErrUnavailable
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT INTO control_metadata VALUES(1,1,?,'1')", config.Epoch[:]); err != nil {
+	if _, err := tx.ExecContext(ctx, "INSERT INTO control_metadata VALUES(1,2,?,'1')", config.Epoch[:]); err != nil {
 		return ErrUnavailable
 	}
 	if err := tx.Commit(); err != nil {
@@ -152,8 +153,12 @@ func Initialize(ctx context.Context, config Config) error {
 }
 
 // Open requires provisioned DB/WAL/owner files, the expected epoch, and schema
-// version 1. Missing/corrupt/restored state is never replaced with an empty DB.
+// version 2. Missing/corrupt/restored state is never replaced with an empty DB.
 func Open(ctx context.Context, config Config) (*Store, error) {
+	return openVersion(ctx, config, 2)
+}
+
+func openVersion(ctx context.Context, config Config, version int) (*Store, error) {
 	config, err := config.normalized()
 	if err != nil {
 		return nil, err
@@ -162,7 +167,7 @@ func Open(ctx context.Context, config Config) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{owner: owner, config: config}
+	store := &Store{owner: owner, config: config, version: version}
 	for i, path := range store.paths() {
 		store.files[i], err = fileInfo(path)
 		if err != nil {
@@ -183,7 +188,11 @@ func Open(ctx context.Context, config Config) (*Store, error) {
 		}
 		if err == nil {
 			// Prepare all required tables, not just metadata, at startup.
-			for _, query := range []string{"SELECT kind,service_id,value,revision,revoked_at FROM credential_revocations LIMIT 0", "SELECT id,fingerprint,revision,revoked_at FROM control_operations LIMIT 0", "SELECT id,revision,payload FROM control_outbox LIMIT 0"} {
+			queries := []string{"SELECT kind,service_id,value,revision,revoked_at FROM credential_revocations LIMIT 0", "SELECT id,fingerprint,revision,revoked_at FROM control_operations LIMIT 0", "SELECT id,revision,payload FROM control_outbox LIMIT 0"}
+			if version == 2 {
+				queries = append(queries, "SELECT id,secret_hash,record FROM deployment_grants LIMIT 0", "SELECT id,payload FROM access_snapshot LIMIT 0", "SELECT id,action,result FROM security_results LIMIT 0")
+			}
+			for _, query := range queries {
 				rows, queryErr := conn.QueryContext(ctx, query)
 				if queryErr != nil {
 					err = queryErr
@@ -194,6 +203,9 @@ func Open(ctx context.Context, config Config) (*Store, error) {
 					break
 				}
 			}
+		}
+		if err == nil && version == 2 {
+			_, err = store.readAccess(ctx, conn)
 		}
 		_ = conn.Close()
 	}
@@ -282,7 +294,7 @@ func (s *Store) metadata(ctx context.Context, q queryer) (uint64, error) {
 	var version int
 	var epoch []byte
 	var text string
-	if q.QueryRowContext(ctx, "SELECT version,CASE WHEN length(epoch)=32 THEN epoch ELSE NULL END,CASE WHEN length(revision)<=20 THEN revision ELSE NULL END FROM control_metadata WHERE id=1").Scan(&version, &epoch, &text) != nil || version != 1 || subtle.ConstantTimeCompare(epoch, s.config.Epoch[:]) != 1 {
+	if q.QueryRowContext(ctx, "SELECT version,CASE WHEN length(epoch)=32 THEN epoch ELSE NULL END,CASE WHEN length(revision)<=20 THEN revision ELSE NULL END FROM control_metadata WHERE id=1").Scan(&version, &epoch, &text) != nil || version != s.version || subtle.ConstantTimeCompare(epoch, s.config.Epoch[:]) != 1 {
 		return 0, ErrUnavailable
 	}
 	revision, err := strconv.ParseUint(text, 10, 64)

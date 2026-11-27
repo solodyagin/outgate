@@ -1,5 +1,5 @@
-// Package controlstate persists gateway control mutations. Its initial schema
-// implements credential revocations; routing, grants and policy follow separately.
+// Package controlstate persists gateway control mutations. The current schema
+// implements credential revocations, deployment grants and access policies.
 package controlstate
 
 import (
@@ -22,6 +22,9 @@ var (
 )
 
 type Config struct {
+	// Services is the trusted configured registration path allowlist.
+	Services        map[string][]string
+	RootFrontend    string
 	Path            string
 	Epoch           [32]byte // independently provisioned installation identity
 	MaxOutboxEvents int      // default 100000
@@ -51,12 +54,15 @@ type Result struct {
 // Event is an internal outbox record, not an Admin API or wire representation.
 // Publisher authorization, export and acknowledgement are runtime responsibilities.
 type Event struct {
-	OperationID string    `json:"operation_id"`
-	Actor       string    `json:"actor"`
-	Revision    string    `json:"revision"`
-	Target      Target    `json:"target"`
-	Reason      string    `json:"reason"`
-	RevokedAt   time.Time `json:"revoked_at"`
+	Action       string    `json:"action,omitempty"`
+	OccurredAt   time.Time `json:"occurred_at,omitzero"`
+	ObjectDigest string    `json:"object_sha256,omitempty"`
+	OperationID  string    `json:"operation_id"`
+	Actor        string    `json:"actor"`
+	Revision     string    `json:"revision"`
+	Target       Target    `json:"target,omitzero"`
+	Reason       string    `json:"reason"`
+	RevokedAt    time.Time `json:"revoked_at,omitzero"`
 }
 
 func clean(value string, max int) bool {
@@ -83,11 +89,17 @@ func (t Target) valid() bool {
 	case "service":
 		return t.Value == ""
 	case "spki_sha256":
+		if len(t.Value) != 64 {
+			return false
+		}
 		decoded, err := hex.DecodeString(t.Value)
 		return err == nil && len(decoded) == 32 && t.Value == strings.ToLower(t.Value)
 	case "certificate_serial":
 		return clean(t.Value, 256)
 	case "grant_id":
+		if len(t.Value) < 22 || len(t.Value) > 128 {
+			return false
+		}
 		decoded, err := base64.RawURLEncoding.DecodeString(t.Value)
 		return err == nil && len(t.Value) <= 128 && len(decoded) >= 16 && base64.RawURLEncoding.EncodeToString(decoded) == t.Value
 	case "hmac_key_id":
@@ -98,12 +110,16 @@ func (t Target) valid() bool {
 }
 
 func (c Command) valid(now time.Time) bool {
+	return (Change{OperationID: c.OperationID, Actor: c.Actor, ExpectedRevision: c.ExpectedRevision, Reason: c.Reason}).valid(now) && c.Target.valid()
+}
+
+func (c Change) valid(now time.Time) bool {
 	id, err := uuid.Parse(c.OperationID)
 	if err != nil || id.String() != c.OperationID || id.Version() != 7 || id.Variant() != uuid.RFC4122 {
 		return false
 	}
 	sec, nsec := id.Time().UnixTime()
 	created := time.Unix(sec, nsec)
-	return c.ExpectedRevision > 0 && clean(c.Actor, 256) && clean(c.Reason, 512) && c.Target.valid() &&
+	return c.ExpectedRevision > 0 && clean(c.Actor, 256) && clean(c.Reason, 512) &&
 		!created.After(now.Add(30*time.Second)) && !created.Before(now.Add(-30*24*time.Hour))
 }
