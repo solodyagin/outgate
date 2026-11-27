@@ -58,14 +58,15 @@ type Replay interface {
 }
 
 type Config struct {
-	Certificate      tls.Certificate
-	ClientRoots      *x509.CertPool
-	TrustDomain      string
-	AttributeHeaders map[string]string
-	Issuer           *delegation.Verifier
-	Routes           *registry.Registry
-	Replay           Replay
-	ReplayNamespace  string
+	Certificate        tls.Certificate
+	ClientRoots        *x509.CertPool
+	TrustDomain        string
+	AllowedAuthorities []string // exact Host/:authority values, including configured ports
+	AttributeHeaders   map[string]string
+	Issuer             *delegation.Verifier
+	Routes             *registry.Registry
+	Replay             Replay
+	ReplayNamespace    string
 
 	// Authenticate applies caller rate limits, grant/SPKI binding, credential
 	// revocation and accepted key lookup. GrantID and KeyID are peer hints.
@@ -76,20 +77,34 @@ type Config struct {
 	// Resolve selects a live transport and a distinct recipient signing key
 	// from trusted state, including the selected recipient's revocation state.
 	Resolve func(context.Context, registry.Decision) (Recipient, error)
-	// RewriteResponse is required for a selected route that negotiated response
-	// mount rewriting. It runs before any response headers are sent.
+	// RewriteResponse optionally overrides the built-in mount header rewriting.
+	// It runs only for routes that negotiated rewriting, before headers are sent.
 	RewriteResponse func(registry.Decision, *http.Response) error
 }
 
 type handler struct {
-	config   Config
-	verifier *delivery.Verifier
-	signer   *httpsig.Profile
+	config      Config
+	verifier    *delivery.Verifier
+	signer      *httpsig.Profile
+	authorities map[string]struct{}
 }
 
 // NewServer prepares the dedicated mTLS listener. The runtime owns listener
 // startup, shutdown, connection quotas, security state and replay lifecycle.
 func NewServer(config Config) (*http.Server, error) {
+	if len(config.AllowedAuthorities) == 0 {
+		return nil, ErrConfig
+	}
+	authorities := make(map[string]struct{}, len(config.AllowedAuthorities))
+	for _, host := range config.AllowedAuthorities {
+		if v1.ValidateHTTPRequestMetadata(http.MethodGet, host, "/", []v1.Header{}) != nil {
+			return nil, ErrConfig
+		}
+		if _, duplicate := authorities[host]; duplicate {
+			return nil, ErrConfig
+		}
+		authorities[host] = struct{}{}
+	}
 	authority, err := url.Parse("spiffe://" + config.TrustDomain)
 	if err != nil || authority.Hostname() == "" || authority.Hostname() != config.TrustDomain ||
 		authority.String() != "spiffe://"+config.TrustDomain || strings.ContainsAny(config.TrustDomain, ":[]") ||
@@ -120,7 +135,7 @@ func NewServer(config Config) (*http.Server, error) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    32768,
-		Handler:           &handler{config: config, verifier: verifier, signer: signer},
+		Handler:           &handler{config: config, verifier: verifier, signer: signer, authorities: authorities},
 	}, nil
 }
 
@@ -129,6 +144,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	peer, ok := verifiedPeer(req.TLS, h.config.TrustDomain, now)
 	if !ok {
 		reject(w, http.StatusUnauthorized)
+		return
+	}
+	if _, allowed := h.authorities[req.Host]; !allowed {
+		reject(w, http.StatusMisdirectedRequest)
 		return
 	}
 	meta, fields, err := requestMetadata(req)
@@ -209,7 +228,6 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if recipient.Transport == nil || recipient.Transport.Handle() != route.Session ||
-		(route.Session.Instance().RewriteMountHeaders && h.config.RewriteResponse == nil) ||
 		subtle.ConstantTimeCompare(key.Secret, recipient.Key.Secret) == 1 {
 		reject(w, http.StatusServiceUnavailable)
 		return
@@ -256,7 +274,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	if route.Session.Instance().RewriteMountHeaders {
 		proxy.ModifyResponse = func(response *http.Response) error {
-			return h.config.RewriteResponse(route, response)
+			if h.config.RewriteResponse != nil {
+				return h.config.RewriteResponse(route, response)
+			}
+			return rewriteMountResponse(route.Prefix, meta.RawURI, response)
 		}
 	}
 	response := http.NewResponseController(w)

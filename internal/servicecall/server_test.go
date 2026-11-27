@@ -113,7 +113,8 @@ func testFixture(t *testing.T) *fixture {
 	cert, roots, clientCert := testCertificates(t)
 	f.clientTLS = &tls.Config{RootCAs: roots, Certificates: []tls.Certificate{clientCert}, MinVersion: tls.VersionTLS13}
 	f.config = Config{
-		Certificate: cert, ClientRoots: roots, TrustDomain: "test.example", Routes: routes, Replay: f.replay, ReplayNamespace: "gateway",
+		AllowedAuthorities: []string{"gateway.test:9443"},
+		Certificate:        cert, ClientRoots: roots, TrustDomain: "test.example", Routes: routes, Replay: f.replay, ReplayNamespace: "gateway",
 		Authenticate: func(_ context.Context, peer Peer, grant, keyID string) (delivery.Key, error) {
 			if peer.ServiceID != callerID || peer.InstanceID != "sender-1" || grant != grantID || keyID != f.call.ID ||
 				peer.SPKI != sha256.Sum256(clientCert.Leaf.RawSubjectPublicKeyInfo) {
@@ -213,8 +214,14 @@ func runServer(t *testing.T, configured *http.Server, cfg *tls.Config) (string, 
 
 func signedRequest(t *testing.T, address, uri, caller string, revision uint64, key delivery.Key) *http.Request {
 	t.Helper()
+	return signedRequestForAuthority(t, address, "gateway.test:9443", uri, caller, revision, key)
+}
+
+func signedRequestForAuthority(t *testing.T, address, authority, uri, caller string, revision uint64, key delivery.Key) *http.Request {
+	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), "POST", address+uri, strings.NewReader("streamed"))
 	must(t, err)
+	req.Host = authority
 	fields := []v1.Header{{"x-outgate-caller-service", caller}, {"x-outgate-target-service", targetID}, {"x-outgate-deployment-grant-id", grantID},
 		{"x-outgate-hop-limit", "3"}, {"x-outgate-context-headers", "[]"}, {"x-forwarded-for", "spoofed"}}
 	if revision != 0 {
@@ -326,5 +333,37 @@ func TestSQLiteServiceListenerRemainsClosedDuringRecovery(t *testing.T) {
 	response := send(t, client, signedRequest(t, address, publicURI, callerID, 0, f.call), 503)
 	if response.Header.Get("Retry-After") != "1" || f.calls.Load() != 0 {
 		t.Fatal("recovery barrier allowed dispatch")
+	}
+}
+
+func TestServiceListenerRequiresExactAuthorityBeforeAdmission(t *testing.T) {
+	f := testFixture(t)
+	for _, authorities := range [][]string{nil, {}, {""}, {"https://gateway.test:9443"}, {"*.test:9443"}, {"gateway.test:0"}, {"gateway.test:9443", "gateway.test:9443"}} {
+		config := f.config
+		config.AllowedAuthorities = authorities
+		if _, err := NewServer(config); !errors.Is(err, ErrConfig) {
+			t.Fatalf("accepted invalid allowlist %q: %v", authorities, err)
+		}
+	}
+	var authenticated atomic.Int32
+	original := f.config.Authenticate
+	f.config.Authenticate = func(ctx context.Context, peer Peer, grant, key string) (delivery.Key, error) {
+		authenticated.Add(1)
+		return original(ctx, peer, grant, key)
+	}
+	configured, err := NewServer(f.config)
+	must(t, err)
+	// Construction must take its own snapshot rather than retain a mutable slice.
+	f.config.AllowedAuthorities[0] = "foreign.test:9443"
+	address, client := runServer(t, configured, f.clientTLS)
+	for _, authority := range []string{"foreign.test:9443", "gateway.test", "gateway.test:443", "gateway.test:09443", "GATEWAY.test:9443"} {
+		send(t, client, signedRequestForAuthority(t, address, authority, publicURI, callerID, 0, f.call), http.StatusMisdirectedRequest)
+	}
+	if authenticated.Load() != 0 || f.replay.count() != 0 || f.calls.Load() != 0 {
+		t.Fatal("foreign authority reached security callbacks or dispatch")
+	}
+	send(t, client, signedRequest(t, address, publicURI, callerID, 0, f.call), http.StatusOK)
+	if authenticated.Load() != 1 || f.calls.Load() != 1 {
+		t.Fatal("allowed authority did not dispatch")
 	}
 }

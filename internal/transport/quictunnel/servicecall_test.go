@@ -62,6 +62,9 @@ func TestServiceListenerForwardsSignedDeliveryToBoundQUICSession(t *testing.T) {
 		if err != nil || string(body) != "streamed" {
 			t.Error("invalid QUIC request body", err)
 		}
+		w.Header().Set("Location", "login?q=%2b#done")
+		w.Header().Add("Set-Cookie", "session=x; Path=/; Secure; HttpOnly")
+		w.Header().Add("Set-Cookie", "__Host-identity=x; Path=/; Secure")
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write([]byte("relayed"))
 	}))
@@ -72,14 +75,14 @@ func TestServiceListenerForwardsSignedDeliveryToBoundQUICSession(t *testing.T) {
 	san := &url.URL{Scheme: "spiffe", Host: "test.example", Path: "/service/sender/instance/sender-1"}
 	cert := &x509.Certificate{URIs: []*url.URL{san}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Minute)}
 	server, err := servicecall.NewServer(servicecall.Config{
-		Certificate: tls.Certificate{Certificate: [][]byte{{1}}, PrivateKey: struct{}{}},
-		ClientRoots: x509.NewCertPool(), TrustDomain: san.Host, Routes: routes, Replay: reserve, ReplayNamespace: "gateway",
+		AllowedAuthorities: []string{"example.com"},
+		Certificate:        tls.Certificate{Certificate: [][]byte{{1}}, PrivateKey: struct{}{}},
+		ClientRoots:        x509.NewCertPool(), TrustDomain: san.Host, Routes: routes, Replay: reserve, ReplayNamespace: "gateway",
 		Authenticate: func(context.Context, servicecall.Peer, string, string) (delivery.Key, error) { return ingressKey, nil },
 		Authorize:    func(context.Context, servicecall.Call) (time.Time, error) { return time.Now().Add(time.Minute), nil },
 		Resolve: func(context.Context, registry.Decision) (servicecall.Recipient, error) {
 			return servicecall.Recipient{Transport: bound, Key: recipientKey}, nil
 		},
-		RewriteResponse: func(_ registry.Decision, _ *http.Response) error { return nil },
 	})
 	must(t, err)
 	request := httptest.NewRequest(http.MethodPost, uri, strings.NewReader("streamed"))
@@ -101,5 +104,12 @@ func TestServiceListenerForwardsSignedDeliveryToBoundQUICSession(t *testing.T) {
 	server.Handler.ServeHTTP(response, request)
 	if response.Code != http.StatusCreated || response.Body.String() != "relayed" {
 		t.Fatalf("gateway response %d, %q", response.Code, response.Body.String())
+	}
+	if response.Header().Get("Location") != prefix+"/login?q=%2b#done" {
+		t.Fatal("QUIC Location did not receive selected mount", response.Header())
+	}
+	cookies := response.Header().Values("Set-Cookie")
+	if len(cookies) != 2 || cookies[0] != "session=x; Path="+prefix+"; Secure; HttpOnly" || cookies[1] != "__Host-identity=x; Path=/; Secure" {
+		t.Fatal("QUIC cookies did not preserve mount paths and Host exception", cookies)
 	}
 }
