@@ -37,6 +37,7 @@ type Peer struct {
 type Call struct {
 	Peer                          Peer
 	GrantID, Target, Method, Path string
+	RawURI                        string // original signed URI; Path is already decoded
 	KeyID                         string
 	User                          delegation.Identity
 	HasUser                       bool
@@ -48,8 +49,9 @@ type Transport interface {
 }
 
 type Recipient struct {
-	Transport Transport
-	Key       delivery.Key
+	Transport  Transport
+	Key        delivery.Key
+	ValidUntil time.Time // optional additional security deadline
 }
 
 type Replay interface {
@@ -77,6 +79,9 @@ type Config struct {
 	// Resolve selects a live transport and a distinct recipient signing key
 	// from trusted state, including the selected recipient's revocation state.
 	Resolve func(context.Context, registry.Decision) (Recipient, error)
+	// Revalidate checks the same call/key/recipient after durable replay commit.
+	// It must not select another session, reserve another nonce or send a request.
+	Revalidate func(context.Context, Call, delivery.Key, registry.Decision, Recipient) error
 	// RewriteResponse optionally overrides the built-in mount header rewriting.
 	// It runs only for routes that negotiated rewriting, before headers are sent.
 	RewriteResponse func(registry.Decision, *http.Response) error
@@ -185,8 +190,9 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	identity, hasUser := verified.Identity()
-	until, err := h.config.Authorize(admission, Call{Peer: peer, GrantID: grantID, Target: binding.Target,
-		Method: meta.Method, Path: path, KeyID: key.ID, User: identity, HasUser: hasUser})
+	call := Call{Peer: peer, GrantID: grantID, Target: binding.Target,
+		Method: meta.Method, Path: path, RawURI: meta.RawURI, KeyID: key.ID, User: identity, HasUser: hasUser}
+	until, err := h.config.Authorize(admission, call)
 	if err != nil {
 		reject(w, statusFor(err))
 		return
@@ -232,6 +238,16 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		reject(w, http.StatusServiceUnavailable)
 		return
 	}
+	if !recipient.ValidUntil.IsZero() && recipient.ValidUntil.Before(deadline) {
+		deadline = recipient.ValidUntil
+		var release context.CancelFunc
+		ctx, release = context.WithDeadline(ctx, deadline)
+		defer release()
+	}
+	if ctx.Err() != nil || !time.Now().Before(deadline) {
+		reject(w, http.StatusServiceUnavailable)
+		return
+	}
 	if err := h.config.Replay.Ready(ctx); err != nil {
 		reject(w, http.StatusServiceUnavailable)
 		return
@@ -257,6 +273,16 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 	if !verified.Signature().ValidAt(time.Now()) {
 		reject(w, http.StatusUnauthorized)
+		return
+	}
+	if h.config.Revalidate != nil {
+		if err := h.config.Revalidate(ctx, call, key, route, recipient); err != nil {
+			reject(w, statusFor(err))
+			return
+		}
+	}
+	if ctx.Err() != nil || !time.Now().Before(deadline) {
+		reject(w, http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.config.Routes.CanDispatchRoute(route, meta.RawURI); err != nil {
