@@ -15,6 +15,7 @@
 | Redis | Опциональный replay backend | Описана условная конфигурация. Совместимость проверяется при поставке адаптера. |
 | SDK, подключённый gateway | `v0.0.0-20261126210702-06595216008a` | Gateway использует wire types, QUIC carrier/HTTP и sessionstate NativeStreams для BoundSession readiness/cleanup и service-side quicsession driver; public Client lifecycle/reconnect поддерживает встроенный QUIC dialer со static/callback/file credential snapshots, proactive renewal и background HTTPS/discovery либо explicit Connect callback без автоматического renewal. Service mTLS listener использует delivery verifier и SQLite replay из SDK. Тестовый модуль закрепляет ту же revision; это версия исходников для сборки. |
 | Service discovery | v1 JSON schema, authenticated GET и SDK cache/helper | [Контракт](discovery.schema.json), [fixtures](../tests/fixtures/discovery/v1/responses.json); SDK NewServiceRequest/cache/codec реализованы; gateway endpoint runtime ещё не реализован. |
+| Registry recovery | Private snapshot format 1, максимум 1 MiB; wire и SQL schema не меняются | [Граница recovery](../internal/registry/README.md): ownership/rollout/root/revisions/discovery/tombstones восстанавливаются без live sessions/readiness. SQL commit/outbox и runtime resync barrier остаются отдельной работой. |
 | Зависимости и SBOM | Закреплённый граф тестового модуля, CycloneDX для Linux и Windows amd64 | CI сверяет состав тестового бинарника и контрольные суммы. Бинарники релиза получат собственные SBOM. [Версии и лицензии](dependencies.md). |
 
 ## Платформы
