@@ -32,4 +32,10 @@ check revocations or confirm independence of CA/credentials across listeners.
 Those checks belong to deployment mapping and the transport/admission boundaries.
 Explicit CA files create a fresh pool, with no implicit system-root fallback.
 The existing runtime still independently validates TLS configuration; this package
-is not wired into it until the deployment loader is implemented.
+is consumed by the shared security mapping in `internal/deployment`; a complete
+deployment launcher remains unfinished.
+
+`LoadRootSet` additionally returns the parsed configured CA certificates alongside
+pool and deadline, allowing offline SPKI/trust-separation checks without a second
+file read or system-root lookup. `LoadRoots` preserves its existing API as a wrapper.
+The caller owns all returned objects and keeps them read-only while in use.

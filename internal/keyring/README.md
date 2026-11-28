@@ -58,6 +58,8 @@ close, sanitized errors, special files and file/env changes after startup.
 Gateway integration uses real SQLite to verify that restarting the loader and
 control store with old key inputs preserves revocation. Its transport admission
 is synthetic; no full signed dispatch or native Windows runtime acceptance is
-claimed. YAML parsing/unknown-key rejection, complete deployment mapping,
-certificate/JWKS loaders, external source freshness, hot reload and checking
-separation from tunnel/admin credentials remain launcher work.
+claimed. Strict YAML/schema validation is implemented in `internal/config`;
+bounded certificate loading and shared TLS/HMAC source composition are implemented
+in `internal/tlsfiles` and `internal/deployment`. Complete deployment mapping,
+JWKS, external source freshness, hot reload and deployment-wide credential
+independence remain launcher work.

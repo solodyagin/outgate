@@ -116,19 +116,35 @@ func LoadServer(ctx context.Context, certFile, keyFile string) (Server, error) {
 // The returned deadline conservatively expires the whole snapshot when its first
 // CA expires. Callers own the pool and must enforce that deadline.
 func LoadRoots(ctx context.Context, path string) (*x509.CertPool, time.Time, error) {
-	data, err := read(ctx, path, maxBundle)
+	set, err := LoadRootSet(ctx, path)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
+	return set.Pool, set.ValidUntil, nil
+}
+
+// RootSet retains the configured certificates for offline trust-separation checks.
+// The caller owns the pool and certificates and must keep them read-only in use.
+type RootSet struct {
+	Pool         *x509.CertPool
+	Certificates []*x509.Certificate
+	ValidUntil   time.Time
+}
+
+func LoadRootSet(ctx context.Context, path string) (RootSet, error) {
+	data, err := read(ctx, path, maxBundle)
+	if err != nil {
+		return RootSet{}, err
+	}
 	certs, err := certificates(data, maxRoots)
 	if err != nil {
-		return nil, time.Time{}, err
+		return RootSet{}, err
 	}
 	pool := x509.NewCertPool()
 	now, until := time.Now(), certs[0].NotAfter
 	for _, cert := range certs {
 		if !valid(cert, now) || !cert.BasicConstraintsValid || !cert.IsCA || cert.KeyUsage&x509.KeyUsageCertSign == 0 {
-			return nil, time.Time{}, ErrUnavailable
+			return RootSet{}, ErrUnavailable
 		}
 		if cert.NotAfter.Before(until) {
 			until = cert.NotAfter
@@ -136,9 +152,9 @@ func LoadRoots(ctx context.Context, path string) (*x509.CertPool, time.Time, err
 		pool.AddCert(cert)
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, time.Time{}, err
+		return RootSet{}, err
 	}
-	return pool, until, nil
+	return RootSet{Pool: pool, Certificates: certs, ValidUntil: until}, nil
 }
 
 func valid(cert *x509.Certificate, now time.Time) bool {

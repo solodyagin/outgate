@@ -68,7 +68,7 @@ context возвращает ошибку, сохраняя ownership; cleanup �
 вызвать Stop/Shutdown после своих store users. Rejected Serve сохраняет caller
 ownership sockets, включая shutdown до первого Serve.
 
-Deployment launcher, browser ingress, YAML mapping, file/keyring/JWKS/certificate
+Deployment launcher, browser ingress, полное YAML mapping, authenticated keyring/JWKS/certificate
 reload sources, служебный health listener, aggregate process RAM/FD budgets,
 Admin mutation publication и discovery/revocation endpoints остаются отдельной
 работой. TCP/QUIC reservations не доказывают RSS bound.
@@ -93,7 +93,8 @@ runtime acceptance остаются отдельной проверкой.
 bindRecipientAdmission, который вызывается production constructor: реальный
 SQLite store принимает selected active key, отклоняет revocation и изменение
 bytes между selection и durable recheck. Transport/registry admission в этом
-тесте явно synthetic и не выполняет business dispatch. Startup file/env loader добавлен отдельно в internal/keyring; reload и deployment
+тесте явно synthetic и не выполняет business dispatch. Startup file/env loader
+добавлен отдельно в internal/keyring; authenticated reload и полное deployment
 YAML mapping остаются следующими шагами.
 
 `internal/keyring.Load` предоставляет bounded startup file/env HMAC source:
@@ -102,3 +103,10 @@ State.Keys=ring.Keys, KeyHealth=ring.Health, RecipientKeyIDs=ring.RecipientKeyID
 Источник закрывает владелец после actual runtime cleanup. Health проверяет только
 локальное состояние keyring; durable revocations остаются в StateAdmission.
 См. [границы и формат источника](../keyring/README.md).
+
+`internal/deployment.PlanSharedSecurity` добавляет проверенный startup security
+subset для QUIC-only shared identity: SAN, matching server identities/service CA,
+Admin/service CA separation и конечные TLS/CA/HMAC deadlines. `sources.Bind(base)`
+подключает TLS, State.Keys, caller limits, authorities и KeyHealth; complete YAML
+mapping/launcher остаются отдельной работой. Runtime заимствует sources; владелец
+закрывает их только после actual runtime cleanup. См. [границы mapping](../deployment/README.md).

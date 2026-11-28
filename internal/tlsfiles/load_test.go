@@ -218,3 +218,17 @@ func TestSkippedMalformedPEM(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRootSetMetadata(t *testing.T) {
+	f := material(t, nil)
+	set, err := LoadRootSet(t.Context(), write(t, f.ca))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(set.Certificates) != 1 || set.Pool == nil || !set.ValidUntil.Equal(f.expiry) || !set.Certificates[0].NotAfter.Equal(f.expiry) {
+		t.Fatal("missing trust metadata")
+	}
+	if _, err := LoadRootSet(t.Context(), write(t, f.cert)); !errors.Is(err, ErrUnavailable) {
+		t.Fatal(err)
+	}
+}

@@ -40,9 +40,14 @@ with an explicit finite lifetime supplied by the owner. `keyring.Load` independe
 validates and resolves these references, including secret independence.
 
 This is a validated input boundary, not deployment acceptance. Full typed mapping,
-TLS source loading/hostname/trust/credential-independence checks, JWKS, aggregate
-process reservations, store provisioning and runtime ownership/deadline enforcement
+complete listener/TLS mapping, deployment-wide hostname/trust/credential-independence
+checks, JWKS, aggregate process reservations, store provisioning and runtime ownership/deadline enforcement
 remain to be connected. `config validate`/`config explain`, maintenance subcommands,
 executable/signal wiring and hot reload are not implemented by this package. The
 parser must not be used to start a partially mapped deployment or to silently
 ignore configuration fields unsupported by a launcher.
+
+The shared QUIC/signed-HTTPS security subset is now mapped separately by
+[`internal/deployment`](../deployment/README.md), including bounded TLS/HMAC loading,
+SAN checks, Admin/service CA separation and source deadlines. This does not complete
+the remaining deployment mapping or authorize a partial launch.
