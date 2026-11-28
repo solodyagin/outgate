@@ -51,7 +51,10 @@ func (r *SQLiteRuntime) Serve(listener net.Listener) error {
 	if listener == nil || !r.started.CompareAndSwap(false, true) {
 		return ErrConfig
 	}
-	limited := &quotaListener{Listener: listener, limits: r.limits, peers: make(map[netip.Addr]int)}
+	limited, err := LimitListener(listener, r.limits)
+	if err != nil {
+		return err
+	}
 	return r.server.ServeTLS(limited, "", "")
 }
 
@@ -64,6 +67,17 @@ func (r *SQLiteRuntime) Shutdown(ctx context.Context) error {
 	}
 	r.closeOnce.Do(func() { r.closeErr = r.store.Close() })
 	return r.closeErr
+}
+
+// LimitListener applies the same pre-TLS quotas to a listener owned by a shared
+// runtime. On error ownership stays with the caller. Closing the returned
+// listener closes the underlying listener; accepted connections release their
+// reservations only when closed.
+func LimitListener(listener net.Listener, limits ConnectionLimits) (net.Listener, error) {
+	if listener == nil || limits.MaxConnections <= 0 || limits.ConnectionsPerIP <= 0 || limits.ConnectionsPerIP > limits.MaxConnections {
+		return nil, ErrConfig
+	}
+	return &quotaListener{Listener: listener, limits: limits, peers: make(map[netip.Addr]int)}, nil
 }
 
 type quotaListener struct {

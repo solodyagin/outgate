@@ -264,6 +264,12 @@ func (r *SQLiteRuntime) Stats() RuntimeStats {
 	return RuntimeStats{len(r.tickets), r.handshakes, len(r.sessions), r.reserved, r.stopping}
 }
 
+// Stop immediately disables admission/resolution and starts network cleanup,
+// without closing shared stores. A composing runtime must wait for its own
+// users of ControlStore/ReplayStore before calling Shutdown to release them.
+// Stop is nonblocking and idempotent; Shutdown is still required.
+func (r *SQLiteRuntime) Stop() { r.beginStop() }
+
 func (r *SQLiteRuntime) beginStop() {
 	r.stopOnce.Do(func() {
 		r.mu.Lock()

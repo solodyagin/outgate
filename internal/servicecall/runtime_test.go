@@ -6,7 +6,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/netip"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -169,7 +168,9 @@ func (c *peerConn) Close() error         { c.once.Do(func() { close(c.closed) })
 func TestConnectionQuotasBeforeTLSAndReleaseOnClose(t *testing.T) {
 	queue := &queuedListener{connections: make(chan net.Conn, 10), done: make(chan struct{})}
 	t.Cleanup(func() { _ = queue.Close() })
-	limited := &quotaListener{Listener: queue, limits: ConnectionLimits{MaxConnections: 2, ConnectionsPerIP: 1}, peers: make(map[netip.Addr]int)}
+	wrapped, err := LimitListener(queue, ConnectionLimits{MaxConnections: 2, ConnectionsPerIP: 1})
+	must(t, err)
+	limited := wrapped.(*quotaListener)
 	connection := func(ip string) *peerConn {
 		server, client := net.Pipe()
 		t.Cleanup(func() { _ = server.Close(); _ = client.Close() })
@@ -220,5 +221,23 @@ func TestConnectionQuotasBeforeTLSAndReleaseOnClose(t *testing.T) {
 	defer limited.mu.Unlock()
 	if limited.total != 0 || len(limited.peers) != 0 {
 		t.Fatal("connection counters leaked")
+	}
+}
+
+func TestLimitListenerRejectsInvalidLimitsWithoutTakingOwnership(t *testing.T) {
+	for _, limits := range []ConnectionLimits{{}, {MaxConnections: 1}, {MaxConnections: 1, ConnectionsPerIP: 2}} {
+		queue := &queuedListener{connections: make(chan net.Conn), done: make(chan struct{})}
+		if _, err := LimitListener(queue, limits); err != ErrConfig {
+			t.Fatal("accepted invalid limits", err)
+		}
+		select {
+		case <-queue.done:
+			t.Fatal("closed rejected listener")
+		default:
+		}
+		_ = queue.Close()
+	}
+	if _, err := LimitListener(nil, ConnectionLimits{MaxConnections: 1, ConnectionsPerIP: 1}); err != ErrConfig {
+		t.Fatal("accepted nil listener")
 	}
 }
