@@ -212,3 +212,33 @@ socket shutdown, blocked registry/callback cleanup, retained store ownership and
 shutdown/serve races. Full gateway launcher/YAML and key loaders, Admin mutation
 publication, public/service ingress composition, WSS/WebSocket and native Windows
 runtime/production load acceptance remain separate work.
+
+### Gateway reconnect intent
+
+`BoundSession.Reconnect(ctx)` uses the existing minor-1 quiescent-fence lifecycle.
+It immediately pauses new HTTP assignments and excludes the exact registry
+session, waits for both directions of every admitted native exchange, then sends
+`reconnect` with `code=server_shutdown`, a random command ID, the remaining bounded
+deadline and the frozen logical request watermark. It does not send an additional
+`drain` or expect `drain_ack` for the reconnect command: the service unregisters
+once quiescent, the gateway acknowledges actual exclusion, and normal remote close
+completes the handshake. The pinned SDK reports reconnect intent only after its
+own native/control/checker cleanup. No replacement connection or business retry is
+started by this method.
+
+The first local `Drain`/`Reconnect` intent wins; repeated calls join the same
+handshake and can only shorten its deadline. A peer drain that arrives before the
+local command was sent removes that unsent command and joins the peer's drain.
+Already transmitted commands retain their protocol obligations. `Close`, revoke,
+credential/security expiry and drain timeout still preempt graceful completion.
+Legacy sessions reject Reconnect without changing their state.
+
+Tests exercise real QUIC/HTTP3 with the pinned SDK driver: an active upload,
+new-assignment rejection, no retry, cleanup before reconnect intent, shortened
+repeated deadlines, crossed peer drain, timeout, legacy/canceled calls, security
+expiry and revocation after terminal acknowledgement. Their admission remains
+explicitly synthetic. This primitive does not yet coordinate the shared runtime's
+listeners: `gateway.Runtime.Shutdown` still forces cancellation. A production
+launcher must turn off admission/readiness, invoke session reconnect concurrently
+within one bounded grace period, then force-close the remainder while retaining
+stores through actual callback cleanup.

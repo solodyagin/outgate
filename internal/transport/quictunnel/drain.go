@@ -44,6 +44,20 @@ func (s *BoundSession) enqueueLocked(kind string, id v1.U64) error {
 // requires service drain_ack, unregister, actual exclusion and unregister_ack.
 // Security/deadlines can preempt it. Close remains immediate cancellation.
 func (s *BoundSession) Drain(ctx context.Context) error {
+	return s.drain(ctx, "drain")
+}
+
+// Reconnect fences new assignments, waits for native quiescence, then asks the
+// service to unregister and reconnect after actual cleanup. It never retries a
+// business request or creates a replacement connection. The first local drain
+// intent wins; repeated Drain/Reconnect calls may only shorten its deadline.
+// A peer final drain can supersede an unsent local intent. Close and security
+// expiry still cancel immediately. Minor-1 quiescent fences are required.
+func (s *BoundSession) Reconnect(ctx context.Context) error {
+	return s.drain(ctx, "reconnect")
+}
+
+func (s *BoundSession) drain(ctx context.Context, kind string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -68,7 +82,7 @@ func (s *BoundSession) Drain(ctx context.Context) error {
 	effect, err := s.model.Close(deadline, time.Now())
 	if err == nil && !s.localDrain && !s.peerDrain {
 		s.localDrain = true
-		err = s.enqueueLocked("drain", v1.U64(id))
+		err = s.enqueueLocked(kind, v1.U64(id))
 	}
 	s.localDrain = true
 	if err == nil {
@@ -116,7 +130,7 @@ func (s *BoundSession) receiveLocked(message any) (sessionstate.Effect, error, b
 				// Join a peer drain if our local intent has not gone on the wire.
 				// Already transmitted commands still require their own acknowledgments.
 				for i := 0; i < len(s.pending); i++ {
-					if s.pending[i].kind == "drain" {
+					if s.pending[i].kind == "drain" || s.pending[i].kind == "reconnect" {
 						copy(s.pending[i:], s.pending[i+1:])
 						s.pending[len(s.pending)-1] = nativeControl{}
 						s.pending = s.pending[:len(s.pending)-1]
@@ -180,14 +194,18 @@ func (s *BoundSession) writerLoop() {
 				deadline := snapshot.Deadline
 				var message any
 				switch item.kind {
-				case "drain":
+				case "drain", "reconnect":
 					ms := min(int(time.Until(deadline)/time.Millisecond), 30000)
 					if ms < 1 {
 						s.mu.Unlock()
 						s.stop(sessionstate.ErrTimeout)
 						return
 					}
-					message = v1.Drain{Type: "drain", CommandID: item.id, DeadlineMS: ms, Code: "shutdown", Extensions: v1.QUICQuiescentFenceExtensions(s.watermark)}
+					if item.kind == "reconnect" {
+						message = v1.Reconnect{Type: "reconnect", CommandID: item.id, DeadlineMS: ms, Code: "server_shutdown", Extensions: v1.QUICQuiescentFenceExtensions(s.watermark)}
+					} else {
+						message = v1.Drain{Type: "drain", CommandID: item.id, DeadlineMS: ms, Code: "shutdown", Extensions: v1.QUICQuiescentFenceExtensions(s.watermark)}
+					}
 				case "drain_ack":
 					message = v1.DrainAck{Type: "drain_ack", CommandID: item.id, Extensions: v1.QUICQuiescentFenceExtensions(s.watermark)}
 				case "unregister_ack":
@@ -195,7 +213,7 @@ func (s *BoundSession) writerLoop() {
 					s.terminalWrite = true
 				}
 				effect, err := s.model.Apply(sessionstate.Gateway, message, time.Now())
-				if err == nil && item.kind == "drain" {
+				if err == nil && (item.kind == "drain" || item.kind == "reconnect") {
 					s.localDrainSent = true
 				}
 				s.mu.Unlock()
