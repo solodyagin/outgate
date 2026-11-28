@@ -110,3 +110,8 @@ Admin/service CA separation и конечные TLS/CA/HMAC deadlines. `sources.
 подключает TLS, State.Keys, caller limits, authorities и KeyHealth; complete YAML
 mapping/launcher остаются отдельной работой. Runtime заимствует sources; владелец
 закрывает их только после actual runtime cleanup. См. [границы mapping](../deployment/README.md).
+
+`internal/deployment.PlanSQLiteState` дополняет security plan настройками registry,
+SQLite control/replay, quotas и replay capacity. Epochs и minimum control revision
+задаёт владелец установки; план не открывает/инициализирует stores и не заменяет
+persistent rollout старым YAML. См. [границы state mapping](../deployment/state.md).

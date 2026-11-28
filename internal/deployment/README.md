@@ -58,7 +58,7 @@ cleanup that continues after a shutdown context expires. The runtime borrows the
 sources and does not close them. Methods and errors redact source references and
 material; context cancellation remains identifiable.
 
-This package is not a launcher or a complete typed deployment configuration.
+This security projection is not a launcher or a complete typed deployment configuration.
 It does not map/serve the public or Admin listeners, storage/initial control state,
 full routing/limits, JWT/JWKS, upstream/audit, aggregate budgets, complete credential
 independence, signals or maintenance commands. Calling Bind must not be treated as
@@ -70,6 +70,11 @@ CA SPKI reuse and cross-signing, earliest deadlines/expiry, no overrides, detach
 bindings, source replacement/removal, concurrent close and redacted errors. A real
 SQLite shared-runtime constructor test provisions stores explicitly in its harness,
 binds loaded sources, preserves unstarted/warmup refusal and shuts down before
-closing borrowed sources. Remaining runtime settings in that test are composed by
-the harness; no full YAML launcher, signed dispatch after the 120s recovery barrier
+closing borrowed sources. Remaining admission/transport settings in that test are composed by
+the harness; state settings are mapped by `PlanSQLiteState` from the same YAML. No full YAML launcher, signed dispatch after the 120s recovery barrier
 or native Windows runtime acceptance is claimed.
+
+The [SQLite state/registry component plan](state.md) adds typed mapping for paths,
+rollout, active-passive pools, quotas and replay capacity with independently supplied
+epochs/revision floor. It composes with the security plan; full launch mapping and
+aggregate transport/process budgets remain unfinished.

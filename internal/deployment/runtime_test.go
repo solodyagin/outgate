@@ -18,8 +18,8 @@ import (
 	"github.com/solodyagin/outgate/internal/transport/quictunnel"
 )
 
-// The rest of runtime configuration is deliberately composed by this test;
-// security binding must not be confused with a full deployment launcher.
+// State and security come from the same YAML. Admission/transport budgets remain
+// explicitly composed by this test; this is not a full deployment launcher.
 func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 	_, v := fixture(t)
 	caller := obj(obj(obj(v, "interservice"), "callers"), "my-service")
@@ -30,8 +30,19 @@ func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 	access["callers"] = map[string]any{"api": caller}
 	access["recipients"] = map[string]any{"api": recipient}
 	access["policies"] = []any{map[string]any{"caller": "api", "target": "api", "paths": []any{"/api"}, "methods": []any{"GET"}, "allow_background": true, "allow_user_context": false}}
-	sources := load(t, document(t, v))
-	control := controlstate.Config{Path: filepath.Join(t.TempDir(), "control.db"), Epoch: [32]byte{1}, Services: map[string][]string{"api": {"/api"}}}
+	obj(obj(v, "storage"), "control")["path"] = filepath.Join(t.TempDir(), "control.db")
+	obj(obj(v, "storage"), "replay")["path"] = filepath.Join(t.TempDir(), "replay.db")
+	doc := document(t, v)
+	sources := load(t, doc)
+	statePlan, err := PlanSQLiteState(doc, installation())
+	if err != nil {
+		t.Fatal(err)
+	}
+	components, err := statePlan.Configs()
+	if err != nil {
+		t.Fatal(err)
+	}
+	control := components.Control
 	check := func(err error) {
 		t.Helper()
 		if err != nil {
@@ -41,7 +52,7 @@ func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 	check(controlstate.Initialize(t.Context(), control))
 	store, err := controlstate.Open(t.Context(), control)
 	check(err)
-	routes := registry.Config{Services: map[string]registry.ServiceConfig{"api": {AllowedPaths: []string{"/api"}, Rollout: registry.Rollout{Stable: "1.0.0"}}}}
+	routes := components.Registry
 	reg, err := registry.New(routes)
 	check(err)
 	snapshot, err := reg.MarshalSnapshot()
@@ -51,7 +62,7 @@ func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 	_, err = store.CommitRegistry(t.Context(), controlstate.Change{OperationID: id.String(), Actor: "operator", ExpectedRevision: 1, Reason: "deployment sources integration"}, routes, snapshot, nil)
 	check(err)
 	check(store.Close())
-	replayConfig := replay.SQLiteConfig{Path: filepath.Join(t.TempDir(), "replay.db"), Namespace: "outgate:gateway", Epoch: [32]byte{2}, Capacity: 200, CallerCapacity: 100, AdmittedRPS: 1}
+	replayConfig := components.Replay
 	check(replay.InitializeSQLite(t.Context(), replayConfig))
 	corpus, err := os.ReadFile("../../tests/fixtures/protocol/v1/control-messages.json")
 	check(err)
@@ -68,10 +79,12 @@ func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 	}
 	policy := quictunnel.RegistrationPolicy{ProtocolMinor: 1, Capabilities: append(ack.Capabilities, "credential_generation"), RequiredCapabilities: ack.RequiredCapabilities, Limits: ack.Limits, Timeouts: ack.Timeouts, Readiness: ack.Readiness}
 	base := gateway.Config{
-		Tunnel:       quictunnel.SQLiteRuntimeConfig{Control: control, Registry: routes, MinimumControlRevision: 2, Replay: replayConfig, Admission: quictunnel.DurableAdmissionConfig{Limits: quictunnel.RegistrationLimits{PerServicePerMinute: 30, PerIPPerMinute: 10, MaxTrackedIPs: 10, MaxConcurrent: 2}, Policy: policy}},
+		Tunnel:       quictunnel.SQLiteRuntimeConfig{Admission: quictunnel.DurableAdmissionConfig{Limits: quictunnel.RegistrationLimits{PerServicePerMinute: 30, PerIPPerMinute: 10, MaxTrackedIPs: 10, MaxConcurrent: 2}, Policy: policy}},
 		TunnelLimits: quictunnel.RuntimeLimits{MaxConnections: 4, ConnectionsPerIP: 4, MaxHandshakes: 2, HandshakesPerIP: 2, BufferBytes: 128 << 20, BufferBytesPerService: 64 << 20, ConnectionOverheadBytes: 65536, StreamReceiveWindow: 32768, ConnectionReceiveWindow: 131072},
 		Connections:  servicecall.ConnectionLimits{MaxConnections: 4, ConnectionsPerIP: 4}, MaxRequests: 4,
 	}
+	base, err = statePlan.Bind(base)
+	check(err)
 	bound, err := sources.Bind(base)
 	check(err)
 	runtime, err := gateway.OpenSQLiteRuntime(t.Context(), bound)
