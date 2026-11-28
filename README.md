@@ -1,30 +1,92 @@
 # Outgate — Reverse API Gateway
 
-Для разработки: [карта контекста](docs/context-map.md) и [локальные проверки](docs/checks.md).
+Outgate — обратный API gateway для Go-сервисов. Сервисам не нужно публиковать входящий порт: они устанавливают исходящее защищённое соединение к шлюзу, а внешние клиенты обращаются к одному домену через обычный HTTPS.
 
-Репозиторий: [solodyagin/outgate](https://github.com/solodyagin/outgate). Реализация [технического задания](docs/requirements.md). Контрактная приёмка этапа 1 пройдена локально. Работающий шлюз и релиз SDK входят в следующие этапы.
+Шлюз маршрутизирует запросы к зарегистрированным префиксам, сохраняет потоковую передачу и поддерживает discovery mount points, канареечное распределение, active-passive реплики и отдельную административную плоскость. Для транспортного подключения доступны QUIC/HTTP/3 и WSS.
 
-- `docs/` — нормативные требования и протокол.
-- [OpenAPI 3.1 для Admin API](docs/admin-openapi.yaml) — контракт команд, чтения состояния и безопасного поиска результатов операций.
-- [Схема конфигурации gateway](docs/config.schema.json) и [схема Admin Web BFF](docs/admin-web.schema.json) описывают отдельные процессы. Примеры для проверки контракта находятся в [docs/examples](docs/examples).
-- [Контракт deployment grant и ротации credentials](docs/credentials.md) связывает выдачу, регистрацию и атомарный источник пары.
-- [Зависимости транспорта и хранилищ](docs/dependencies.md) фиксируют версии для следующего шага и команды проверок.
-- [Матрица совместимости](docs/compatibility.md) и [матрица приёмки](docs/acceptance-matrix.md) связывают версии, требования и проверки.
-- `tests/fixtures/protocol/v1/` — нормативный golden corpus.
-- [outgate-sdk](https://github.com/solodyagin/outgate-sdk) — отдельный Go-модуль `github.com/solodyagin/outgate-sdk`, чистые wire codecs `protocol/v1` и проверяемая HTTP state machine `wssstate` без сетевого I/O.
-- [outgate-service-template](https://github.com/solodyagin/outgate-service-template) — отдельный репозиторий шаблона сервиса; содержит README, реализация boilerplate ещё не начата.
+> Проект находится в процессе реализации. Наличие отдельных модулей и контрактов не означает, что весь gateway готов к production-развёртыванию. Перед использованием сверяйтесь с [матрицей приёмки](docs/acceptance-matrix.md) и актуальным статусом разработки, если он доступен.
 
-Конечная поставка разделена на gateway, SDK и service-template repositories. SDK вынесен из этого repository; репозиторий service-template создан отдельно. Сам шаблон и versioned releases ещё отсутствуют. SDK реализует QUIC bootstrap/stream 0 и ordinary streaming HTTP/3. [`internal/transport/quictunnel`](internal/transport/quictunnel/README.md) связывает регистрацию и single-session RoundTripper на опубликованной закреплённой SDK revision. SDK service-side driver подключает readiness/control/graceful cleanup; SDK public `client` предоставляет lifecycle и sequential reconnect через внешний Connect callback. Встроенный QUIC dialer, static/callback/file credential source и proactive renewal с bounded drain/actual cleanup подключены; ordinary background ServiceHTTPClient подключён; NewServiceRequest/discovery helper подключён; WebSocket/Hijacker, полные transport adapters и production control state остаются в работе. Локальные `replace` не используются; файл `go.work` для сборки не требуется.
+## Как это работает
 
-Пакет `internal/registry` моделирует владельцев префиксов, версии, rollout, active-passive и выбор маршрута. Он принимает уже авторизованные регистрации и команды с ожидаемой ревизией. Регистрация создаёт сессию без готовности; готовность сообщает управляющий слой. Долговременное состояние и аудит подключает runtime gateway. Для проверки путей и регистрации модуль использует закреплённый `protocol/v1` отдельного SDK.
+```text
+Внешний HTTPS-клиент ──► Outgate gateway
+                            │
+                            ├── QUIC/HTTP/3 туннель ──► экземпляр сервиса
+                            └── WSS туннель         ──► экземпляр сервиса
+```
 
-`quictunnel.AcceptBound` связывает transport с registry/sessionstate: единственный status reader, freshness/security/expiry timers, readiness gate, повторная проверка выбранного handle и cleanup после окончания native HTTP exchanges. До готовности и после stale/revoke новые назначения запрещены; route ownership при разрыве сохраняется. Обязательный admission callback предоставляет проверенный допуск и durable решение. `quictunnel.DurableAdmission` подключает SQLite RegistrationOwner, bounded per-IP/service gates, negotiated ack и cleanup; обязательный security-source callback задаёт короткую lease и replay barrier. Bounded security renewal/controller проверяет live grant и control/replay health; отдельная freshness lease не продлевает hard credential/drain сроки. `quictunnel.OpenSQLiteRuntime` добавляет validated UDP/TLS listener, pre-TLS quotas, exact transport map и shutdown перед закрытием stores; общий launcher/YAML/key loaders и budgets между listeners остаются в работе. Для minor 1 negotiated quiescent fence подключает graceful drain/unregister обоих направлений. SDK `quicsession.Service` проверяется совместно с BoundSession на реальном mTLS/HTTP3: status/readiness, drain обоих направлений, crossed commands и streaming upload. Public Client lifecycle/reconnect реализован в SDK через explicit Connect callback; встроенный QUIC dialer принимает static/callback/file atomic credential snapshots и выполняет proactive renewal после локальной проверки новой пары с bounded drain/actual cleanup старой. SDK поддерживает подписанный ServiceHTTPClient, JWT-делегирование и логический discovery helper. Gateway discovery endpoint и virtual HTTP/1.1/Hijacker остаются в работе.
+Типовой сценарий:
 
-[`internal/servicecall`](internal/servicecall/README.md) предоставляет service mTLS listener для подписанных вызовов. Он проверяет caller и маршрут, резервирует nonce в SQLite и подписывает запрос выбранному получателю на QUIC. Запуск, state для grants/отзывов, discovery и обработку response mount headers подключает runtime.
+1. Сервис настраивает SDK и устанавливает исходящее соединение.
+2. Сервис регистрирует разрешённые URL-префиксы, версию и instance ID.
+3. Gateway проверяет права и регистрирует экземпляр.
+4. Внешний HTTP-запрос сопоставляется с наиболее подходящим префиксом.
+5. Gateway выбирает версию и экземпляр и передаёт запрос через транспортный туннель.
 
-## Проверка
+Неизвестный путь под зарезервированным префиксом `/api` не отправляется в SPA fallback. Для остальных маршрутов используется настроенный SPA-upstream или frontend tunnel, если он разрешён и активирован.
 
-Из корня gateway, Python 3.12+:
+## Возможности проекта
+
+- Регистрация сервисов и маршрутизация по URL-префиксам.
+- Исходящие транспортные соединения QUIC/HTTP/3 и WSS.
+- Round-robin и active-passive для реплик; stable/canary rollout.
+- Потоковая передача HTTP, SSE и WebSocket.
+- Discovery логических mount points и настройка strip/preserve пути.
+- Подписанные межсервисные HTTPS-вызовы и проверка политик доступа.
+- Отдельные контракты для gateway, SDK и шаблона сервиса.
+- Admin API, схемы конфигурации и durable control-state компоненты.
+
+## Компоненты
+
+Проект разделён на три отдельных репозитория:
+
+| Компонент | Назначение | Ссылка |
+|---|---|---|
+| Gateway | Маршрутизация, транспортные адаптеры, control state и административные контракты | Этот репозиторий |
+| SDK | Клиентская Go-библиотека и wire types/codecs протокола | [outgate-sdk](https://github.com/solodyagin/outgate-sdk) |
+| Service template | Стартовый шаблон сервиса, подключаемого к gateway | [outgate-service-template](https://github.com/solodyagin/outgate-service-template) |
+
+## Навигация по репозиторию
+
+- [`docs/`](docs/) — требования, протоколы, схемы и контракты.
+- [`docs/context-map.md`](docs/context-map.md) — карта проекта для разработки: с неё удобно начинать работу над задачей.
+- [`docs/requirements.md`](docs/requirements.md) — техническое задание.
+- [`docs/protocol.md`](docs/protocol.md) и [`docs/protocol.schema.json`](docs/protocol.schema.json) — wire-контракт протокола v1.
+- [`docs/admin-openapi.yaml`](docs/admin-openapi.yaml) — спецификация Admin API в OpenAPI 3.1.
+- [`docs/config.schema.json`](docs/config.schema.json) и [`docs/admin-web.schema.json`](docs/admin-web.schema.json) — схемы конфигурации gateway и Admin Web/BFF.
+- [`docs/credentials.md`](docs/credentials.md) — deployment grants и ротация credentials.
+- [`docs/dependencies.md`](docs/dependencies.md) — зависимости и команды их проверки.
+- [`docs/compatibility.md`](docs/compatibility.md) и [`docs/acceptance-matrix.md`](docs/acceptance-matrix.md) — совместимость и критерии приёмки.
+- [`tests/fixtures/protocol/v1/`](tests/fixtures/protocol/v1/) — golden corpus протокола.
+- [`internal/registry/`](internal/registry/) — реестр маршрутов, версий и экземпляров.
+- [`internal/transport/quictunnel/`](internal/transport/quictunnel/) — QUIC-транспорт и admission lifecycle.
+- [`internal/servicecall/`](internal/servicecall/) — service mTLS listener для подписанных вызовов.
+- [`internal/controlstate/`](internal/controlstate/) — durable control state и регистрация.
+
+## Для разработчиков
+
+Перед изменением прочитайте [карту контекста](docs/context-map.md), затем связанные с задачей разделы требований и протокола. Обязательные и платформенные проверки перечислены в [docs/checks.md](docs/checks.md).
+
+### Требования
+
+- Go toolchain, указанный проектом в `go.mod`.
+- Python 3.12+ для contract validators.
+- Подходящий C toolchain для race detector на Linux.
+
+### Быстрые проверки
+
+Из корня репозитория:
+
+```bash
+python3 -B tests/check.py package ./internal/registry
+python3 -B tests/check.py contracts
+python3 -B tests/check.py full
+python3 -B tests/check.py full --plan
+```
+
+В Windows используйте `python` вместо `python3`. Команда `full --plan` показывает набор команд без их выполнения.
+
+Для прямого запуска ключевых contract и Go-проверок:
 
 ```bash
 python3 tests/fixtures/protocol/v1/verify.py
@@ -37,13 +99,14 @@ GOWORK=off go test -race ./...
 GOWORK=off go vet ./...
 ```
 
-В Windows используется `python` вместо `python3`. В PowerShell задайте `$env:GOWORK = 'off'` и выполните `go test ./...` и `go vet ./...`. CI gateway проверяет контракты и реестр на Linux и Windows, включая race detector на Linux. У SDK есть отдельные Go-проверки. [README SDK](https://github.com/solodyagin/outgate-sdk#readme).
+На Windows перед Go-командами задайте `$env:GOWORK = 'off'`; race-тесты и проверку Windows-сборки выполняйте согласно [docs/checks.md](docs/checks.md).
 
-SDK содержит локальный snapshot schema/fixtures, поэтому собирается и тестируется без gateway checkout. При изменении wire-контракта обновляйте ТЗ, protocol/schema, fixtures и SDK согласованно. Для соседних checkout побайтовая сверка из gateway:
+## Безопасность и границы гарантий
 
-```bash
-cmp docs/protocol.schema.json ../outgate-sdk/docs/protocol.schema.json
-diff -r tests/fixtures/protocol/v1 ../outgate-sdk/tests/fixtures/protocol/v1
-```
+Production-развёртывание требует полного соответствия техническому заданию и критериям приёмки: в частности, корректной настройки TLS/mTLS, credentials, durable state, сетевых ограничений и административного доступа. Development-конфигурация не является готовым production-профилем.
 
-Происхождение и порядок обновления snapshot описаны в SDK: `docs/contract-snapshot.md`.
+Подробности и актуальные нормативные требования находятся в [техническом задании](docs/requirements.md), [контракте credentials](docs/credentials.md) и [матрице приёмки](docs/acceptance-matrix.md).
+
+## Лицензия
+
+MIT. См. [LICENSE](LICENSE).
