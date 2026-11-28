@@ -47,7 +47,7 @@ type registrationGate struct {
 }
 
 func newRegistrationGate(limits RegistrationLimits, services []string) (*registrationGate, error) {
-	if limits.PerIPPerMinute < 1 || limits.PerIPPerMinute > 2147483647 || limits.PerServicePerMinute < 1 || limits.PerServicePerMinute > 2147483647 || limits.MaxTrackedIPs < 1 || limits.MaxTrackedIPs > 1000000 || limits.MaxConcurrent < 1 || limits.MaxConcurrent > 1000000 || len(services) == 0 {
+	if !limits.valid() || len(services) == 0 {
 		return nil, controlstate.ErrConfig
 	}
 	g := &registrationGate{limits: limits, ips: make(map[netip.Addr]*registrationBucket), services: make(map[string]*registrationBucket, len(services)), now: time.Now}
@@ -111,4 +111,8 @@ func (g *registrationGate) service(id string) error {
 		return controlstate.ErrRegistrationQuota
 	}
 	return nil
+}
+
+func (limits RegistrationLimits) valid() bool {
+	return limits.PerIPPerMinute >= 1 && limits.PerIPPerMinute <= 2147483647 && limits.PerServicePerMinute >= 1 && limits.PerServicePerMinute <= 2147483647 && limits.MaxTrackedIPs >= 1 && limits.MaxTrackedIPs <= 1000000 && limits.MaxConcurrent >= 1 && limits.MaxConcurrent <= 1000000
 }

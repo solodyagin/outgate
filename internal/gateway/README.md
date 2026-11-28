@@ -122,3 +122,8 @@ QUIC сохраняется до actual worker cleanup, TCP — до возвр�
 Существующие локальные quotas остаются обязательными. `deployment.BindSharedResources`
 маппит соответствующие YAML ceilings в консервативный общий TCP+QUIC pool.
 Это не RSS/FD/stream budget; см. [границы reservation](../resourcebudget/README.md).
+
+`deployment.PlanQUICTransport` добавляет local transport/admission/wire limits и
+TLS/registration deadlines из YAML + explicit owner reservations. Его pure validator
+разделяет проверки с runtime construction. Fixed heartbeat/shutdown/bootstrap-control
+настройки принимаются только в поддерживаемом профиле. См. [границы transport mapping](../deployment/transport.md).

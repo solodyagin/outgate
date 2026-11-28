@@ -123,3 +123,14 @@ func runtimeTLS(certificate tls.Certificate, roots *x509.CertPool) (*tls.Config,
 	cert := tls.Certificate{Certificate: chain, PrivateKey: certificate.PrivateKey, Leaf: leaf}
 	return &tls.Config{MinVersion: tls.VersionTLS13, MaxVersion: tls.VersionTLS13, Certificates: []tls.Certificate{cert}, ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs: roots.Clone(), NextProtos: []string{v1.QUICALPN}, SessionTicketsDisabled: true}, nil
 }
+
+// ValidateRuntimeSettings checks transport/admission settings without opening
+// stores or requiring bound identity/security callbacks. It is not authorization
+// to launch a runtime; OpenSQLiteRuntime still validates those dependencies.
+func ValidateRuntimeSettings(limits RuntimeLimits, admission DurableAdmissionConfig) error {
+	if _, _, err := runtimeTransport(limits, admission.Policy); err != nil {
+		return err
+	}
+	_, err := normalizedAdmissionSettings(admission)
+	return err
+}

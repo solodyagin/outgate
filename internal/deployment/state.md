@@ -60,7 +60,8 @@ bootstrap rollout, and missing/stale/invalid state cannot fall back to defaults.
 The tests explicitly provision their stores, check newer durable rollout restoration,
 revision-floor and epoch rejection, real replay health during its mandatory recovery
 barrier, then compose the state/security plans into the real shared constructor.
-Admission policy and transport/process budgets remain harness-supplied in that test.
+Admission policy and local transport limits now come from `PlanQUICTransport`;
+explicit measured reservations remain harness-supplied.
 
 This does not implement a launch plan. Grant/access bootstrap, Admin publication,
 full routing timeouts, transport/admission limits, aggregate process budgets,

@@ -2,24 +2,19 @@ package deployment
 
 import (
 	"context"
-	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	v1 "github.com/solodyagin/outgate-sdk/protocol/v1"
 	"github.com/solodyagin/outgate-sdk/replay"
 	"github.com/solodyagin/outgate/internal/controlstate"
 	"github.com/solodyagin/outgate/internal/gateway"
 	"github.com/solodyagin/outgate/internal/registry"
-	"github.com/solodyagin/outgate/internal/servicecall"
-	"github.com/solodyagin/outgate/internal/transport/quictunnel"
 )
 
-// State and security come from the same YAML. Admission/transport budgets remain
-// explicitly composed by this test; this is not a full deployment launcher.
+// State, security, transport and shared resources come from the same YAML.
+// Explicit installation evidence/reservations are supplied by this harness.
 func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 	_, v := fixture(t)
 	caller := obj(obj(obj(v, "interservice"), "callers"), "my-service")
@@ -64,25 +59,10 @@ func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 	check(store.Close())
 	replayConfig := components.Replay
 	check(replay.InitializeSQLite(t.Context(), replayConfig))
-	corpus, err := os.ReadFile("../../tests/fixtures/protocol/v1/control-messages.json")
+	transportPlan, err := PlanQUICTransport(doc, transportReservations())
 	check(err)
-	var fixtures struct{ Positive []json.RawMessage }
-	check(json.Unmarshal(corpus, &fixtures))
-	var ack v1.RegisterAck
-	for _, data := range fixtures.Positive {
-		var tag struct{ Type string }
-		check(json.Unmarshal(data, &tag))
-		if tag.Type == "register_ack" {
-			ack, err = v1.DecodeRegisterAck(data)
-			check(err)
-		}
-	}
-	policy := quictunnel.RegistrationPolicy{ProtocolMinor: 1, Capabilities: append(ack.Capabilities, "credential_generation"), RequiredCapabilities: ack.RequiredCapabilities, Limits: ack.Limits, Timeouts: ack.Timeouts, Readiness: ack.Readiness}
-	base := gateway.Config{
-		Tunnel:       quictunnel.SQLiteRuntimeConfig{Admission: quictunnel.DurableAdmissionConfig{Limits: quictunnel.RegistrationLimits{PerServicePerMinute: 30, PerIPPerMinute: 10, MaxTrackedIPs: 10, MaxConcurrent: 2}, Policy: policy}},
-		TunnelLimits: quictunnel.RuntimeLimits{MaxConnections: 4, ConnectionsPerIP: 4, MaxHandshakes: 2, HandshakesPerIP: 2, BufferBytes: 128 << 20, BufferBytesPerService: 64 << 20, ConnectionOverheadBytes: 65536, StreamReceiveWindow: 32768, ConnectionReceiveWindow: 131072},
-		Connections:  servicecall.ConnectionLimits{MaxConnections: 4, ConnectionsPerIP: 4}, MaxRequests: 4,
-	}
+	base, err := transportPlan.Bind(gateway.Config{})
+	check(err)
 	base, err = BindSharedResources(doc, base, 65536)
 	check(err)
 	base, err = statePlan.Bind(base)

@@ -48,23 +48,40 @@ type DurableAdmission struct {
 }
 
 func NewDurableAdmission(config DurableAdmissionConfig) (*DurableAdmission, error) {
-	if config.Owner == nil || !peeridentity.ValidTrustDomain(config.TrustDomain) || config.Security == nil || config.Policy.validate() != nil || config.Bound.Transport.Development {
+	if config.Owner == nil || !peeridentity.ValidTrustDomain(config.TrustDomain) || config.Security == nil {
 		return nil, controlstate.ErrConfig
+	}
+	config, err := normalizedAdmissionSettings(config)
+	if err != nil {
+		return nil, err
+	}
+	gate, err := newRegistrationGate(config.Limits, config.Owner.ServiceIDs())
+	if err != nil {
+		return nil, err
+	}
+	return &DurableAdmission{config: config, gate: gate, renewSlots: make(chan struct{}, config.Limits.MaxConcurrent)}, nil
+}
+
+// normalizedAdmissionSettings is shared with IO-free deployment validation.
+// Owner, identity and security-source presence remain constructor checks.
+func normalizedAdmissionSettings(config DurableAdmissionConfig) (DurableAdmissionConfig, error) {
+	if config.Policy.validate() != nil || config.Bound.Transport.Development || !config.Limits.valid() {
+		return DurableAdmissionConfig{}, controlstate.ErrConfig
 	}
 	config.Policy.Capabilities = slices.Clone(config.Policy.Capabilities)
 	config.Policy.RequiredCapabilities = slices.Clone(config.Policy.RequiredCapabilities)
 	// Bootstrap deadlines agree with the ack and may only tighten defaults.
 	if config.Bound.Transport.RegisterTimeout != 0 && config.Bound.Transport.RegisterTimeout != time.Duration(config.Policy.Timeouts.RegisterMS)*time.Millisecond || config.Bound.Transport.WriteTimeout != 0 && config.Bound.Transport.WriteTimeout != time.Duration(config.Policy.Timeouts.WriteMS)*time.Millisecond {
-		return nil, controlstate.ErrConfig
+		return DurableAdmissionConfig{}, controlstate.ErrConfig
 	}
 	config.Bound.Transport.RegisterTimeout = time.Duration(config.Policy.Timeouts.RegisterMS) * time.Millisecond
 	config.Bound.Transport.WriteTimeout = time.Duration(config.Policy.Timeouts.WriteMS) * time.Millisecond
 	if config.Bound.TickInterval < 0 || config.Bound.TickInterval > time.Second || config.Bound.MaxCommands < 0 || config.Bound.MaxCommands > 2048 {
-		return nil, controlstate.ErrConfig
+		return DurableAdmissionConfig{}, controlstate.ErrConfig
 	}
 	renewal, err := config.Renewal.normalized()
 	if err != nil {
-		return nil, controlstate.ErrConfig
+		return DurableAdmissionConfig{}, controlstate.ErrConfig
 	}
 	config.Renewal = renewal
 	// The pinned SDK prepays native lease and command-history accounting inside
@@ -75,13 +92,9 @@ func NewDurableAdmission(config DurableAdmissionConfig) (*DurableAdmission, erro
 		commands = 64
 	}
 	if config.Policy.Limits.BufferBytes < config.Policy.Limits.MaxInflight*64+commands*128 {
-		return nil, controlstate.ErrConfig
+		return DurableAdmissionConfig{}, controlstate.ErrConfig
 	}
-	gate, err := newRegistrationGate(config.Limits, config.Owner.ServiceIDs())
-	if err != nil {
-		return nil, err
-	}
-	return &DurableAdmission{config: config, gate: gate, renewSlots: make(chan struct{}, config.Limits.MaxConcurrent)}, nil
+	return config, nil
 }
 
 // Accept consumes one established QUIC connection. Peer IP comes exclusively

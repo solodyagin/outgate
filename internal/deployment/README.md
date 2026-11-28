@@ -85,3 +85,9 @@ It explicitly charges TCP and QUIC together, preserves local quotas, and require
 an operator-provided TCP connection charge. See [reservation scope and ownership](../resourcebudget/README.md).
 Transport/admission policy, handler/stream/FD/CPU budgets and full launch-profile
 mapping remain unfinished; a charged-byte pool is not a process RSS bound.
+
+The [QUIC transport/admission plan](transport.md) maps local reservations, registration
+rates, native buffer/wire limits and TLS/registration deadlines, using runtime-shared
+IO-free validation. Fixed unsupported tuning is rejected. The constructor harness
+now combines all four projections from one YAML document with explicit installation
+evidence and measured reservations; complete launch mapping remains unfinished.
