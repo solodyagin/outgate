@@ -83,6 +83,8 @@ func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 		TunnelLimits: quictunnel.RuntimeLimits{MaxConnections: 4, ConnectionsPerIP: 4, MaxHandshakes: 2, HandshakesPerIP: 2, BufferBytes: 128 << 20, BufferBytesPerService: 64 << 20, ConnectionOverheadBytes: 65536, StreamReceiveWindow: 32768, ConnectionReceiveWindow: 131072},
 		Connections:  servicecall.ConnectionLimits{MaxConnections: 4, ConnectionsPerIP: 4}, MaxRequests: 4,
 	}
+	base, err = BindSharedResources(doc, base, 65536)
+	check(err)
 	base, err = statePlan.Bind(base)
 	check(err)
 	bound, err := sources.Bind(base)

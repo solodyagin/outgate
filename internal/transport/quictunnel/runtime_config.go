@@ -17,12 +17,14 @@ import (
 	"github.com/solodyagin/outgate-sdk/replay"
 	"github.com/solodyagin/outgate/internal/controlstate"
 	"github.com/solodyagin/outgate/internal/registry"
+	"github.com/solodyagin/outgate/internal/resourcebudget"
 )
 
 // RuntimeLimits reserve configured windows/buffers plus operator-measured
 // connection overhead. These charges bound admission, not process RSS. Other
-// ingress listeners need their own or a launcher-level shared budget.
+// ingress listeners can participate through the same optional Shared pool.
 type RuntimeLimits struct {
+	Shared                                       *resourcebudget.Budget // optional aggregate pool, charged with the complete native reservation
 	MaxConnections, ConnectionsPerIP             int
 	MaxHandshakes, HandshakesPerIP               int
 	BufferBytes, BufferBytesPerService           int64
@@ -53,6 +55,9 @@ func runtimeTransport(limits RuntimeLimits, policy RegistrationPolicy) (*quic.Co
 		return nil, 0, controlstate.ErrConfig
 	}
 	charge := int64(policy.Limits.BufferBytes) + int64(limits.ConnectionReceiveWindow) + limits.ConnectionOverheadBytes
+	if limits.Shared != nil && !limits.Shared.CanFit(charge) {
+		return nil, 0, controlstate.ErrConfig
+	}
 	if limits.BufferBytes < charge || limits.BufferBytesPerService < charge || limits.BufferBytesPerService > limits.BufferBytes {
 		return nil, 0, controlstate.ErrConfig
 	}

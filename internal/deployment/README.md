@@ -78,3 +78,10 @@ The [SQLite state/registry component plan](state.md) adds typed mapping for path
 rollout, active-passive pools, quotas and replay capacity with independently supplied
 epochs/revision floor. It composes with the security plan; full launch mapping and
 aggregate transport/process budgets remain unfinished.
+
+`BindSharedResources(document, base, tcpConnectionBytes)` installs an optional
+shared admission pool from the configured connection/per-IP/global-buffer ceilings.
+It explicitly charges TCP and QUIC together, preserves local quotas, and requires
+an operator-provided TCP connection charge. See [reservation scope and ownership](../resourcebudget/README.md).
+Transport/admission policy, handler/stream/FD/CPU budgets and full launch-profile
+mapping remain unfinished; a charged-byte pool is not a process RSS bound.

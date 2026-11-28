@@ -16,6 +16,7 @@ import (
 	"github.com/solodyagin/outgate-sdk/httpsig"
 	"github.com/solodyagin/outgate/internal/peeridentity"
 	"github.com/solodyagin/outgate/internal/registry"
+	"github.com/solodyagin/outgate/internal/resourcebudget"
 	"github.com/solodyagin/outgate/internal/servicecall"
 	"github.com/solodyagin/outgate/internal/transport/quictunnel"
 )
@@ -23,8 +24,12 @@ import (
 var ErrClosed = errors.New("outgate: gateway runtime stopped or not serving")
 
 type Config struct {
-	Tunnel       quictunnel.SQLiteRuntimeConfig
-	TunnelLimits quictunnel.RuntimeLimits
+	// Resources optionally shares connection/per-IP/charged-byte reservations across
+	// both ingress listeners. TCPConnectionBytes must be explicitly supplied.
+	Resources          *resourcebudget.Budget
+	TCPConnectionBytes int64
+	Tunnel             quictunnel.SQLiteRuntimeConfig
+	TunnelLimits       quictunnel.RuntimeLimits
 	// TLS identity, stores, routes, resolution and admission callbacks are owned
 	// by this runtime and must be unset in Service/State. Other service settings
 	// retain the signed listener semantics, including post-commit revalidation.
@@ -71,6 +76,14 @@ type tunnelOwner interface {
 }
 
 func OpenSQLiteRuntime(ctx context.Context, config Config) (*Runtime, error) {
+	if config.Connections.Shared != nil || config.TunnelLimits.Shared != nil || config.Connections.ConnectionBytes != 0 || config.Resources == nil && config.TCPConnectionBytes != 0 || config.Resources != nil && (config.TCPConnectionBytes > 1<<30 || !config.Resources.CanFit(config.TCPConnectionBytes)) {
+		return nil, servicecall.ErrConfig
+	}
+	config.Connections.Shared = config.Resources
+	if config.Resources != nil {
+		config.Connections.ConnectionBytes = config.TCPConnectionBytes
+		config.TunnelLimits.Shared = config.Resources
+	}
 	s := config.Service
 	if config.MaxRequests < 1 || config.MaxRequests > 1000000 || config.KeyHealth == nil ||
 		config.Connections.MaxConnections < 1 || config.Connections.ConnectionsPerIP < 1 || config.Connections.ConnectionsPerIP > config.Connections.MaxConnections ||

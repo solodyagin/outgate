@@ -7,11 +7,13 @@ import (
 
 	"github.com/quic-go/quic-go"
 	"github.com/solodyagin/outgate/internal/controlstate"
+	"github.com/solodyagin/outgate/internal/resourcebudget"
 )
 
 type runtimeTicketKey struct{}
 type runtimePeer struct{ connections, handshakes int }
 type runtimeTicket struct {
+	shared                          *resourcebudget.Lease
 	runtime                         *SQLiteRuntime
 	ip                              netip.Addr
 	handshaking, attached, released bool
@@ -47,7 +49,15 @@ func (r *SQLiteRuntime) connectionContext(ctx context.Context, info *quic.Client
 		r.mu.Unlock()
 		return nil, controlstate.ErrRegistrationQuota
 	}
-	ticket := &runtimeTicket{runtime: r, ip: ip, handshaking: true}
+	var reservation *resourcebudget.Lease
+	if r.limits.Shared != nil {
+		reservation, err = r.limits.Shared.Acquire(ip, r.charge)
+		if err != nil {
+			r.mu.Unlock()
+			return nil, controlstate.ErrRegistrationQuota
+		}
+	}
+	ticket := &runtimeTicket{runtime: r, ip: ip, handshaking: true, shared: reservation}
 	r.tickets[ticket] = struct{}{}
 	peer.connections++
 	peer.handshakes++
@@ -112,6 +122,7 @@ func (r *SQLiteRuntime) releaseLocked(ticket *runtimeTicket) {
 		return
 	}
 	ticket.released = true
+	ticket.shared.Release()
 	r.finishHandshakeLocked(ticket)
 	peer := r.peers[ticket.ip]
 	peer.connections--

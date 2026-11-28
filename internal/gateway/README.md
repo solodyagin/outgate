@@ -115,3 +115,10 @@ mapping/launcher остаются отдельной работой. Runtime з�
 SQLite control/replay, quotas и replay capacity. Epochs и minimum control revision
 задаёт владелец установки; план не открывает/инициализирует stores и не заменяет
 persistent rollout старым YAML. См. [границы state mapping](../deployment/state.md).
+
+`Config.Resources` подключает общий admission pool к обоим pre-TLS ingress paths;
+`TCPConnectionBytes` задаётся оператором явно. Count/per-IP/charged-byte резерв
+QUIC сохраняется до actual worker cleanup, TCP — до возврата underlying Close.
+Существующие локальные quotas остаются обязательными. `deployment.BindSharedResources`
+маппит соответствующие YAML ceilings в консервативный общий TCP+QUIC pool.
+Это не RSS/FD/stream budget; см. [границы reservation](../resourcebudget/README.md).

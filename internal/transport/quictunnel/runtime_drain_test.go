@@ -6,6 +6,7 @@ import (
 	"github.com/solodyagin/outgate-sdk/sessionstate"
 	"github.com/solodyagin/outgate/internal/controlstate"
 	"github.com/solodyagin/outgate/internal/registry"
+	"github.com/solodyagin/outgate/internal/resourcebudget"
 	"io"
 	"net"
 	"net/http"
@@ -92,6 +93,9 @@ func TestRuntimeDrainRejectsPreTLSAdmission(t *testing.T) {
 
 func TestRuntimeDrainForceRetainsBlockedNativeOwnership(t *testing.T) {
 	f := runtimeFixtureConfig(t)
+	pool, err := resourcebudget.New(resourcebudget.Limits{Connections: 4, ConnectionsPerIP: 4, Bytes: 1 << 30})
+	must(t, err)
+	f.limits.Shared = pool
 	r, packet, _ := startRuntime(t, f)
 	conn, _, _ := runtimeRegister(t, f, packet)
 	_ = runtimeBound(t, r)
@@ -117,6 +121,9 @@ func TestRuntimeDrainForceRetainsBlockedNativeOwnership(t *testing.T) {
 	if stats := r.Stats(); !stats.Draining || !stats.Stopping || stats.Connections != 1 || stats.ReservedBytes != r.charge {
 		t.Fatal("drain released quota before cleanup", stats)
 	}
+	if stats := pool.Stats(); stats.Connections != 1 || stats.Bytes == 0 {
+		t.Fatal("blocked native owner released shared budget", stats)
+	}
 	if err := r.ControlStore().Close(); !errors.Is(err, controlstate.ErrInstanceInUse) {
 		t.Fatal("released durable owner", err)
 	}
@@ -128,6 +135,9 @@ func TestRuntimeDrainForceRetainsBlockedNativeOwnership(t *testing.T) {
 	defer stop()
 	must(t, r.Shutdown(finish))
 	await(t, done)
+	if stats := pool.Stats(); stats != (resourcebudget.Stats{}) {
+		t.Fatal("shared budget leaked after native cleanup", stats)
+	}
 }
 
 func TestRuntimeDrainStartsEverySessionBeforeWaiting(t *testing.T) {

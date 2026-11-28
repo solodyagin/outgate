@@ -10,14 +10,17 @@ import (
 	"sync/atomic"
 
 	"github.com/solodyagin/outgate-sdk/replay"
+	"github.com/solodyagin/outgate/internal/resourcebudget"
 )
 
 // ConnectionLimits bound accepted TCP connections before TLS allocates state.
-// They apply to this dedicated listener; a gateway-wide budget remains the
-// responsibility of the launcher when it opens other ingress listeners.
+// Local quotas apply alongside an optional shared connection/byte pool. Other
+// listeners participate only when their owner installs the same shared pool.
 type ConnectionLimits struct {
 	MaxConnections   int
 	ConnectionsPerIP int
+	Shared           *resourcebudget.Budget
+	ConnectionBytes  int64 // positive operator-provided TLS/HTTP reservation when Shared is set
 }
 
 // SQLiteRuntime owns a dedicated HTTPS server and its provisioned replay store.
@@ -33,7 +36,7 @@ type SQLiteRuntime struct {
 }
 
 func OpenSQLiteRuntime(ctx context.Context, config Config, storage replay.SQLiteConfig, limits ConnectionLimits) (*SQLiteRuntime, error) {
-	if limits.MaxConnections <= 0 || limits.ConnectionsPerIP <= 0 || limits.ConnectionsPerIP > limits.MaxConnections {
+	if !validConnectionLimits(limits) {
 		return nil, ErrConfig
 	}
 	server, store, err := OpenSQLiteServer(ctx, config, storage)
@@ -74,7 +77,7 @@ func (r *SQLiteRuntime) Shutdown(ctx context.Context) error {
 // listener closes the underlying listener; accepted connections release their
 // reservations only when closed.
 func LimitListener(listener net.Listener, limits ConnectionLimits) (net.Listener, error) {
-	if listener == nil || limits.MaxConnections <= 0 || limits.ConnectionsPerIP <= 0 || limits.ConnectionsPerIP > limits.MaxConnections {
+	if listener == nil || !validConnectionLimits(limits) {
 		return nil, ErrConfig
 	}
 	return &quotaListener{Listener: listener, limits: limits, peers: make(map[netip.Addr]int)}, nil
@@ -103,6 +106,12 @@ func (l *quotaListener) Accept() (net.Conn, error) {
 		peer = peer.Unmap()
 		l.mu.Lock()
 		allowed := l.total < l.limits.MaxConnections && l.peers[peer] < l.limits.ConnectionsPerIP
+		var reservation *resourcebudget.Lease
+		if allowed && l.limits.Shared != nil {
+			var err error
+			reservation, err = l.limits.Shared.Acquire(peer, l.limits.ConnectionBytes)
+			allowed = err == nil
+		}
 		if allowed {
 			l.total++
 			l.peers[peer]++
@@ -115,6 +124,7 @@ func (l *quotaListener) Accept() (net.Conn, error) {
 		return &quotaConn{Conn: conn, release: func() {
 			l.mu.Lock()
 			defer l.mu.Unlock()
+			reservation.Release()
 			l.total--
 			l.peers[peer]--
 			if l.peers[peer] == 0 {
@@ -126,12 +136,22 @@ func (l *quotaListener) Accept() (net.Conn, error) {
 
 type quotaConn struct {
 	net.Conn
-	once    sync.Once
-	release func()
+	once     sync.Once
+	release  func()
+	closeErr error
 }
 
 func (c *quotaConn) Close() error {
-	err := c.Conn.Close()
-	c.once.Do(c.release)
-	return err
+	c.once.Do(func() { c.closeErr = c.Conn.Close(); c.release() })
+	return c.closeErr
+}
+
+func validConnectionLimits(l ConnectionLimits) bool {
+	if l.MaxConnections < 1 || l.ConnectionsPerIP < 1 || l.ConnectionsPerIP > l.MaxConnections {
+		return false
+	}
+	if l.Shared == nil {
+		return l.ConnectionBytes == 0
+	}
+	return l.ConnectionBytes <= 1<<30 && l.Shared.CanFit(l.ConnectionBytes)
 }
