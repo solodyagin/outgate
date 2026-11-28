@@ -6,11 +6,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"maps"
 	"net"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
+	"github.com/solodyagin/outgate-sdk/httpsig"
+	"github.com/solodyagin/outgate/internal/peeridentity"
 	"github.com/solodyagin/outgate/internal/registry"
 	"github.com/solodyagin/outgate/internal/servicecall"
 	"github.com/solodyagin/outgate/internal/transport/quictunnel"
@@ -24,10 +28,11 @@ type Config struct {
 	// TLS identity, stores, routes, resolution and admission callbacks are owned
 	// by this runtime and must be unset in Service/State. Other service settings
 	// retain the signed listener semantics, including post-commit revalidation.
-	Service     servicecall.Config
-	State       servicecall.StateConfig
-	Connections servicecall.ConnectionLimits
-	MaxRequests int // bounds active HTTP handlers and external Ready probes
+	Service         servicecall.Config
+	State           servicecall.StateConfig
+	RecipientKeyIDs map[string]string // configured recipient service -> active gateway signing key ID
+	Connections     servicecall.ConnectionLimits
+	MaxRequests     int // bounds active HTTP handlers and external Ready probes
 	// KeyHealth checks authoritative accepted-key source freshness, not merely
 	// presence of a cached key. Successful assertions expire within five seconds.
 	// All external callbacks must honor their context.
@@ -73,6 +78,10 @@ func OpenSQLiteRuntime(ctx context.Context, config Config) (*Runtime, error) {
 		s.Routes != nil || s.Replay != nil || s.ReplayNamespace != "" || s.Resolve != nil || s.Authenticate != nil || s.Authorize != nil || s.Revalidate != nil || config.State.Store != nil {
 		return nil, servicecall.ErrConfig
 	}
+	active, err := activeRecipientKeys(config)
+	if err != nil {
+		return nil, err
+	}
 	prior := config.Tunnel.AdditionalSecurity
 	config.Tunnel.AdditionalSecurity = func(ctx context.Context) (time.Time, error) {
 		deadline, err := fresh(ctx, config.KeyHealth)
@@ -108,9 +117,8 @@ func OpenSQLiteRuntime(ctx context.Context, config Config) (*Runtime, error) {
 	s.ClientRoots = config.Tunnel.ClientRoots.Clone()
 	s.TrustDomain = config.Tunnel.Admission.TrustDomain
 	s.Routes, s.Replay, s.ReplayNamespace = tunnel.Routes(), tunnel.ReplayStore(), config.Tunnel.Replay.Namespace
-	s.Resolve = exactResolver(tunnel.Session)
 	config.State.Store = tunnel.ControlStore()
-	s, err = servicecall.BindStateAdmission(s, config.State)
+	s, err = bindRecipientAdmission(s, config.State, exactResolver(tunnel.Session), active)
 	if err != nil {
 		return fail(err)
 	}
@@ -148,6 +156,61 @@ func exactResolver(resolve func(*registry.Session) (*quictunnel.BoundSession, er
 			return servicecall.Recipient{}, ErrClosed
 		}
 		return servicecall.Recipient{Transport: bound}, nil
+	}
+}
+
+func activeRecipientKeys(config Config) (map[string]string, error) {
+	if len(config.RecipientKeyIDs) == 0 || len(config.RecipientKeyIDs) > 256 {
+		return nil, servicecall.ErrConfig
+	}
+	for service, id := range config.RecipientKeyIDs {
+		if !peeridentity.ValidID(service, 64) || !peeridentity.ValidID(id, 128) {
+			return nil, servicecall.ErrConfig
+		}
+		if _, known := config.Tunnel.Registry.Services[service]; !known {
+			return nil, servicecall.ErrConfig
+		}
+	}
+	return maps.Clone(config.RecipientKeyIDs), nil
+}
+
+func bindRecipientAdmission(config servicecall.Config, state servicecall.StateConfig, resolve func(context.Context, registry.Decision) (servicecall.Recipient, error), active map[string]string) (servicecall.Config, error) {
+	config.Resolve = recipientResolver(resolve, active, state.Keys)
+	return servicecall.BindStateAdmission(config, state)
+}
+
+// Select the configured recipient key before durable admission verifies the same
+// ID/bytes/revocation and caps its lifetime. The HTTP caller never supplies an
+// active recipient ID. Revalidation later checks this same key without reselect.
+func recipientResolver(resolve func(context.Context, registry.Decision) (servicecall.Recipient, error), active map[string]string, keys func(context.Context, string, string, string) (servicecall.AcceptedKey, error)) func(context.Context, registry.Decision) (servicecall.Recipient, error) {
+	return func(ctx context.Context, route registry.Decision) (servicecall.Recipient, error) {
+		if err := ctx.Err(); err != nil {
+			return servicecall.Recipient{}, err
+		}
+		recipient, err := resolve(ctx, route)
+		if err != nil {
+			return servicecall.Recipient{}, err
+		}
+		id, ok := active[route.ServiceID]
+		if !ok || route.Session == nil || recipient.Transport == nil || recipient.Transport.Handle() != route.Session || route.Session.Instance().ServiceID != route.ServiceID {
+			return servicecall.Recipient{}, ErrClosed
+		}
+		accepted, err := keys(ctx, httpsig.Gateway, route.ServiceID, id)
+		if err != nil {
+			return servicecall.Recipient{}, err
+		}
+		if err := ctx.Err(); err != nil {
+			return servicecall.Recipient{}, err
+		}
+		if accepted.Key.ID != id || len(accepted.Key.Secret) < 32 || len(accepted.Key.Secret) > 4096 || !accepted.NotAfter.After(time.Now()) {
+			return servicecall.Recipient{}, ErrClosed
+		}
+		recipient.Key = accepted.Key
+		recipient.Key.Secret = slices.Clone(accepted.Key.Secret)
+		if recipient.ValidUntil.IsZero() || accepted.NotAfter.Before(recipient.ValidUntil) {
+			recipient.ValidUntil = accepted.NotAfter
+		}
+		return recipient, nil
 	}
 }
 

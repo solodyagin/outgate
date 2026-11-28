@@ -9,7 +9,15 @@
 rewrite. TLS identity, trust domain, registry, replay namespace/store, resolver
 и admission callbacks задаёт общий runtime; overrides запрещены. `Config.State`
 задаёт accepted HMAC key source, фиксированные caller rate limits и optional
-user-security check. Store внедряется владельцем. Конфигурация QUIC валидирует
+user-security check. `Config.RecipientKeyIDs` задаёт явную map recipient service →
+active gateway signing key ID (1…256 entries, только известные registry services,
+валидные service/key IDs). Map копируется при startup. После exact transport
+resolution runtime получает этот ID через State.Keys для leg=outgategateway,
+проверяет returned ID/32…4096 secret bytes/NotAfter и копирует secret. Затем
+BindStateAdmission повторно сверяет тот же ID/bytes, durable revocations и lifetime;
+после replay commit сохраняются прежние revalidation checks. Caller не выбирает
+recipient key ID; неизвестный target, key source error/expiry/смена bytes не
+вызывают fallback на другой ключ или transport. Store внедряется владельцем. Конфигурация QUIC валидирует
 статический certificate/key; HTTPS использует отдельную копию DER/CA pool с тем же
 ключом, TLS 1.3, required verified client certificate и без session tickets.
 Private key и внешние sources должны оставаться неизменяемыми либо предоставлять
@@ -80,3 +88,10 @@ validated reconnect во время replay warmup без его сокращен
 cleanup сохраняет native quotas/store ownership и после forced stop. Полный
 signed HTTP→QUIC exchange общего runtime после restart barrier и native Windows
 runtime acceptance остаются отдельной проверкой.
+
+Регрессия recipient signing-key wiring покрыта прямым тестом того же
+bindRecipientAdmission, который вызывается production constructor: реальный
+SQLite store принимает selected active key, отклоняет revocation и изменение
+bytes между selection и durable recheck. Transport/registry admission в этом
+тесте явно synthetic и не выполняет business dispatch. Key file/env loaders,
+reload и deployment YAML mapping этим исправлением не добавлены.

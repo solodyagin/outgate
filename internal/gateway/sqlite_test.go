@@ -59,9 +59,10 @@ func sqliteConfig(t *testing.T) Config {
 	}
 	policy := quictunnel.RegistrationPolicy{ProtocolMinor: 1, Capabilities: append(ack.Capabilities, "credential_generation"), RequiredCapabilities: ack.RequiredCapabilities, Limits: ack.Limits, Timeouts: ack.Timeouts, Readiness: ack.Readiness}
 	return Config{
-		Tunnel:       quictunnel.SQLiteRuntimeConfig{Control: control, Registry: routes, MinimumControlRevision: 2, Replay: storage, Certificate: certificate, ClientRoots: roots, Admission: quictunnel.DurableAdmissionConfig{TrustDomain: "outgate.test", Limits: quictunnel.RegistrationLimits{PerServicePerMinute: 30, PerIPPerMinute: 10, MaxTrackedIPs: 10, MaxConcurrent: 2}, Policy: policy}},
-		TunnelLimits: quictunnel.RuntimeLimits{MaxConnections: 4, ConnectionsPerIP: 4, MaxHandshakes: 2, HandshakesPerIP: 2, BufferBytes: 128 << 20, BufferBytesPerService: 64 << 20, ConnectionOverheadBytes: 65536, StreamReceiveWindow: 32768, ConnectionReceiveWindow: 131072},
-		Service:      servicecall.Config{AllowedAuthorities: []string{"gateway.test:443"}},
+		Tunnel:          quictunnel.SQLiteRuntimeConfig{Control: control, Registry: routes, MinimumControlRevision: 2, Replay: storage, Certificate: certificate, ClientRoots: roots, Admission: quictunnel.DurableAdmissionConfig{TrustDomain: "outgate.test", Limits: quictunnel.RegistrationLimits{PerServicePerMinute: 30, PerIPPerMinute: 10, MaxTrackedIPs: 10, MaxConcurrent: 2}, Policy: policy}},
+		TunnelLimits:    quictunnel.RuntimeLimits{MaxConnections: 4, ConnectionsPerIP: 4, MaxHandshakes: 2, HandshakesPerIP: 2, BufferBytes: 128 << 20, BufferBytesPerService: 64 << 20, ConnectionOverheadBytes: 65536, StreamReceiveWindow: 32768, ConnectionReceiveWindow: 131072},
+		RecipientKeyIDs: map[string]string{"api": "gateway-api-1"},
+		Service:         servicecall.Config{AllowedAuthorities: []string{"gateway.test:443"}},
 		State: servicecall.StateConfig{Callers: map[string]servicecall.CallerLimit{"api": {PerSecond: 1, Burst: 1}}, Keys: func(context.Context, string, string, string) (servicecall.AcceptedKey, error) {
 			return servicecall.AcceptedKey{Key: delivery.Key{}, NotAfter: time.Now().Add(time.Minute)}, nil
 		}},
@@ -176,6 +177,8 @@ func TestSQLiteCompositionRejectsOverridesAndCleansFailedConstruction(t *testing
 	check(t, err)
 	check(t, r.Shutdown(t.Context()))
 	cases := []func(*Config){
+		func(c *Config) { c.RecipientKeyIDs = nil },
+		func(c *Config) { c.RecipientKeyIDs = map[string]string{"unknown": "key"} },
 		func(c *Config) {
 			c.Service.Resolve = func(context.Context, registry.Decision) (servicecall.Recipient, error) {
 				return servicecall.Recipient{}, nil
