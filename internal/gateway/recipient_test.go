@@ -3,6 +3,7 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/solodyagin/outgate-sdk/httpsig"
 	v1 "github.com/solodyagin/outgate-sdk/protocol/v1"
 	"github.com/solodyagin/outgate/internal/controlstate"
+	"github.com/solodyagin/outgate/internal/keyring"
 	"github.com/solodyagin/outgate/internal/registry"
 	"github.com/solodyagin/outgate/internal/servicecall"
 )
@@ -187,5 +189,46 @@ func TestActiveRecipientKeyIDsAreValidatedAndDetached(t *testing.T) {
 		if _, err := activeRecipientKeys(config); !errors.Is(err, servicecall.ErrConfig) {
 			t.Fatal("accepted invalid active IDs", err)
 		}
+	}
+}
+
+func TestLoadedKeyringPreservesDurableRevocationAfterRestart(t *testing.T) {
+	config := sqliteConfig(t)
+	route := recipientRoute(t, config)
+	t.Setenv("OUTGATE_TEST_RECIPIENT_CALL", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32)))
+	t.Setenv("OUTGATE_TEST_RECIPIENT_GATEWAY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32)))
+	sourceConfig := keyring.Config{Services: []string{"api"}, Callers: map[string][]keyring.Reference{"api": {{ID: "call", SecretEnv: "OUTGATE_TEST_RECIPIENT_CALL"}}}, Recipients: map[string]keyring.Recipient{"api": {ActiveKeyID: "gateway-api-1", Keys: []keyring.Reference{{ID: "gateway-api-1", SecretEnv: "OUTGATE_TEST_RECIPIENT_GATEWAY"}}}}, NotAfter: time.Now().Add(time.Minute)}
+	for restart := 0; restart < 2; restart++ {
+		source, err := keyring.Load(t.Context(), sourceConfig)
+		check(t, err)
+		store, err := controlstate.Open(t.Context(), config.Tunnel.Control)
+		check(t, err)
+		state := config.State
+		state.Store = store
+		state.Keys = source.Keys
+		bound, err := bindRecipientAdmission(servicecall.Config{}, state, func(context.Context, registry.Decision) (servicecall.Recipient, error) {
+			return servicecall.Recipient{Transport: recipientTransport{route.Session}}, nil
+		}, source.RecipientKeyIDs())
+		check(t, err)
+		recipient, err := bound.Resolve(t.Context(), route)
+		if restart == 0 {
+			check(t, err)
+			if recipient.Key.ID != "gateway-api-1" || recipient.Key.Secret[0] != 8 {
+				t.Fatal("loader did not supply active recipient key")
+			}
+			revision, err := store.Revision(t.Context())
+			check(t, err)
+			id, err := uuid.NewV7()
+			check(t, err)
+			_, err = store.Revoke(t.Context(), controlstate.Command{OperationID: id.String(), Actor: "security-admin", ExpectedRevision: revision, Reason: "keyring restart check", Target: controlstate.Target{Kind: "hmac_key_id", ServiceID: "api", Value: "gateway-api-1"}})
+			check(t, err)
+		} else if err == nil {
+			t.Fatal("reload of old key configuration erased durable revocation")
+		}
+		if _, err := source.Health(t.Context()); err != nil {
+			t.Fatal("local keyring health unexpectedly includes durable policy", err)
+		}
+		check(t, store.Close())
+		check(t, source.Close())
 	}
 }

@@ -93,5 +93,12 @@ runtime acceptance остаются отдельной проверкой.
 bindRecipientAdmission, который вызывается production constructor: реальный
 SQLite store принимает selected active key, отклоняет revocation и изменение
 bytes между selection и durable recheck. Transport/registry admission в этом
-тесте явно synthetic и не выполняет business dispatch. Key file/env loaders,
-reload и deployment YAML mapping этим исправлением не добавлены.
+тесте явно synthetic и не выполняет business dispatch. Startup file/env loader добавлен отдельно в internal/keyring; reload и deployment
+YAML mapping остаются следующими шагами.
+
+`internal/keyring.Load` предоставляет bounded startup file/env HMAC source:
+State.Keys=ring.Keys, KeyHealth=ring.Health, RecipientKeyIDs=ring.RecipientKeyIDs().
+Его NotAfter задаётся явно; loaded configuration остаётся static до restart.
+Источник закрывает владелец после actual runtime cleanup. Health проверяет только
+локальное состояние keyring; durable revocations остаются в StateAdmission.
+См. [границы и формат источника](../keyring/README.md).
