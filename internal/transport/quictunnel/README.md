@@ -42,6 +42,59 @@ Commit must perform route permission/conflict checks and required durable regist
 
 Binding.Release attaches ownership cleanup to AcceptBound: ack/binding failure closes the connection and releases admission resources; normal cleanup first closes native QUIC/HTTP3, waits for handlers/body cleanup and control loops, removes the registry session, then calls Release outside the session mutex. A blocked application upload retains ownership until actual cleanup, even if Close(ctx) times out. Release is chained with the admission owner's cleanup and must not block forever. A Commit error still requires rollback/resync of its failed registry transaction; it may return a Binding.Release cleanup hook even with an error. AcceptBound closes the connection before invoking that hook and releasing credential ownership. GuardRegistration is intended for AcceptBound; any manual caller must honor nonzero Binding.Release on error as well as success. Committed generation fences remain durable after a later registration/ack error; the same pair can reconnect, and older pairs cannot regain access.
 
-Tests exercise real mTLS/SPIFFE and QUIC with persisted grants, generation ownership and `controlstate.RegistrationOwner` snapshot/outbox publication. They cover successful registration, ack/bind/commit/pre-gate/identity errors, exactly-once release, retained durable ownership after lost ack and a blocked-upload cleanup boundary. The Commit callback can use `RegistrationOwner.Register` and build its ack from the returned registration; its Release must also clean up that fresh session on bind/ack errors. The owner never asserts SecurityReady. Registration rate/readiness gate, runtime renewal/controller, Admin mutation publication, full production configuration and native Windows runtime acceptance remain separate work.
+Tests exercise real mTLS/SPIFFE and QUIC with persisted grants, generation ownership and `controlstate.RegistrationOwner` snapshot/outbox publication. They cover successful registration, ack/bind/commit/pre-gate/identity errors, exactly-once release, retained durable ownership after lost ack and a blocked-upload cleanup boundary. The Commit callback can use `RegistrationOwner.Register` and build its ack from the returned registration; its Release must also clean up that fresh session on bind/ack errors. The owner never asserts SecurityReady. The bounded rate/readiness gate and production ack/cleanup wiring are available through DurableAdmission below. Runtime renewal/controller, Admin mutation publication, full production configuration and native Windows runtime acceptance remain separate work.
 
 Guard failures use the existing nack table: bad/revoked/stale credentials are nonretryable auth_failed, active ownership is retryable duplicate_instance, resource quotas are retryable quota_exceeded, and opaque storage/commit errors remain state_unavailable. Error details are fixed and contain no credentials.
+
+
+## Bounded durable admission factory
+
+`NewDurableAdmission(DurableAdmissionConfig{Owner, TrustDomain, Limits, Policy,
+Bound, Security})` wires the registration owner to real QUIC admission. `Accept`
+uses the connection's socket peer IP; neither registration metadata nor forwarded
+headers choose a rate-limit identity. Token buckets enforce independent per-IP
+and per-service rates before grant hashing/SQL (profile values: 10/min per IP,
+30/min per service, each with an equal initial burst). Service keys come only
+from the owner's fixed configured principals and the verified TLS SAN. Failed
+credentials still spend the attempt budget. IPv4-mapped addresses share the IPv4
+bucket. A separate concurrency cap rejects excess work without a waiting queue.
+
+The IP map is capped explicitly. Each attempt examines at most 16 entries for
+idle-minute reclamation; depleted live buckets are never evicted to admit a new
+IP. Full bookkeeping fails closed even if a later bounded maintenance pass could
+reclaim more idle entries. QUIC uses the existing retryable `quota_exceeded` nack
+and connection backoff; it has no HTTP Retry-After header. No wire fields change.
+Listener-level connection/TLS handshake limits, aggregate RAM/FD reservations and
+budgets across listeners remain required before this post-TLS admission stage.
+
+`RegistrationPolicy` validates wire maxima and tightened protocol timeouts,
+negotiates minor/capability intersection, caps inflight to the service's offer,
+echoes credential generation and makes a fresh random 128-bit session ID.
+Unsupported requirements, one-sided quiescent-fence opt-in and an oversized ack
+are rejected before durable generation admission. Maximum-width timestamps and
+revision are budgeted before persistence. Actual path states/service revision
+come from the committed candidate. Production mode is mandatory; supplied Bound
+registration/write timeouts must agree with policy, or be zero to derive them.
+
+The required `Security` callback asserts healthy mandatory control/revocation/
+replay sources, with a future ValidUntil at most five seconds away and the
+trusted ReadyNotBefore barrier. It runs under a context capped at five seconds
+before credential work and again after snapshot publication. It must honor that
+context; no detached callback goroutines or unbounded retry queue are created.
+A healthy replay warmup supplies a future barrier, rather than denying every
+registration. The ack uses the later barrier, rounded UP to Unix seconds. Its
+security deadline is bounded by both assertions and certificate/grant expiry.
+Missing/stale/invalid/late assertions fail closed. A late health/lease/ack error
+keeps durable ownership, closes the carrier and removes only its fresh session
+before releasing the lease after native cleanup.
+
+After Accept the runtime still publishes the transport mapping, calls
+EnableDispatch and performs security renewal/revocation fanout. There is no
+renewal controller in this factory: without one the initial short security lease
+expires and the connection closes, including during replay warmup. The current
+SDK session model only shortens security deadlines; renewable lease support and
+the controller are the next integration step, not evidence of completed
+production acceptance. Pending routes still require administrative activation.
+Tests use real mTLS/SPIFFE, SQLite and QUIC for successful registered-but-unready
+ack, gate/refill/concurrency limits, pre/post-publication health failures,
+credential/feature rejection, peer closure before ack and lease cleanup.

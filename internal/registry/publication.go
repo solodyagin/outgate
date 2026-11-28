@@ -142,3 +142,14 @@ func (r *Registry) ReconcileRegistrationAuthorized(data []byte) error {
 	r.publicationBlocked = false
 	return nil
 }
+
+// CheckPublication is a cheap admission gate before credential hashing/storage.
+// It checks only the live publication barrier, not security-store health.
+func (r *Registry) CheckPublication() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.publicationBlocked {
+		return ErrPublicationUnavailable
+	}
+	return nil
+}

@@ -116,3 +116,11 @@ registered-but-unready sessions), revocation fanout, Admin mutation publication,
 launcher/key loaders and PostgreSQL are separate work. This owner does not assert
 SecurityReady or activate pending routes. SQL schema, SDK pin and wire contracts
 are unchanged.
+
+`quictunnel.DurableAdmission` now supplies the bounded per-IP/per-service gate,
+negotiated ack and cleanup wiring around this owner. `ControlStore()` ensures its
+guard acquires leases in the same store; detached `ServiceIDs()` seeds only the
+configured service buckets. The required security-source assertion, listener
+handshake/memory budgets, periodic renewal/controller and launcher remain runtime
+responsibilities. `Routes().CheckPublication()` rejects a closed publication
+barrier before credential hashing/storage; it does not prove store health.

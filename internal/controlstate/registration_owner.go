@@ -69,6 +69,12 @@ func copyRegistryConfig(config registry.Config) registry.Config {
 // handles survive later registrations and verified resync.
 func (o *RegistrationOwner) Routes() *registry.Registry { return o.routes }
 
+// ControlStore is the same store that acquired the admission lease.
+func (o *RegistrationOwner) ControlStore() *Store { return o.store }
+
+// ServiceIDs returns detached configured principals for bounded admission gates.
+func (o *RegistrationOwner) ServiceIDs() []string { return slices.Sorted(maps.Keys(o.config.Services)) }
+
 // Register accepts an already authenticated AcquireRegistration lease. It
 // rechecks exact live ownership, current grant binding, expiry, revocations and
 // generation inside the snapshot/revision/operation/outbox write transaction.
