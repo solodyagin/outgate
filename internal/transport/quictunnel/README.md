@@ -138,3 +138,77 @@ request and remains bounded by its caller context even while a registry lock
 blocks cleanup; native cancellation and ownership release remain separate. Listener/aggregate memory budgets,
 launcher/key loaders, Admin mutation publication, user-security propagation and
 native Windows/runtime/storage production acceptance remain separate work.
+
+
+## SQLite QUIC runtime
+
+`OpenSQLiteRuntime(ctx, SQLiteRuntimeConfig, RuntimeLimits)` owns explicitly
+provisioned control/replay stores, their recovered RegistrationOwner and
+DurableAdmission. Missing files/snapshot, wrong epoch/watermark or invalid config
+fail closed; it never initializes or repairs state. Admission.Owner and
+Admission.Security must be nil because the runtime binds its own stores. An
+optional AdditionalSecurity callback can only add a fresh <=5s dependency bound;
+it cannot replace SQLite checks, shorten replay warmup or extend source expiry.
+Server certificate NotAfter also caps admission/renewal health.
+
+The static TLS profile requires TLS 1.3, service CA client verification and the
+exact Outgate ALPN. Server DER chain, key match, leaf date and EKU are checked; DER and CA-pool state
+are detached. Only standard ECDSA P-256/384/521, RSA (at most 8192 bits) and
+Ed25519 private keys are accepted. Keys remain read-only; dynamic TLS callbacks,
+custom signers, key reload and session tickets are not installed. QUIC v1 uses
+no 0-RTT or datagrams, one incoming bidi stream for control stream 0, three
+incoming uni streams for HTTP/3, fixed explicit receive windows, 15s keepalive
+and 45s idle. Configured handshake total is at most 5s (idle is half that).
+
+`Serve(packetConn)` takes exclusive ownership of one UDP socket on its first
+call. Stateless Retry validates the initial source address before ConnContext
+reserves global/per-IP connection and handshake quotas, before TLS allocation.
+Unknown/unvalidated addresses allocate no ticket. IPv4-mapped addresses share an
+IP budget; a connection remains charged to its initial verified address through
+its lifetime, including later network changes. Pre-TLS excess is refused by
+QUIC without credential work; service-budget excess uses the existing retryable
+quota_exceeded nack/close code after bounded register parsing and before grant
+mutation. A nack may be lost in a network/close race; peer close classification
+remains quota_exceeded, not an authentication failure.
+
+Every ticket reserves `Admission.Policy.Limits.BufferBytes +
+ConnectionReceiveWindow + ConnectionOverheadBytes` against the runtime's global
+buffer budget. After TLS identity is verified, it additionally reserves that
+charge against the fixed configured service budget. Overhead must be chosen from
+measurements: these are conservative admission reservations, not an RSS claim.
+There is no live-ticket eviction or unbounded waiting queue. The advertised
+native lease/command-history peak must fit the prepaid tunnel buffer at startup.
+Failed handshakes release tickets on native context termination; accepted tickets
+retain their connection/IP/buffer/service budgets until actual BoundSession
+cleanup, even if the network already closed. A future launcher must account for
+other listeners and aggregate process RAM/FD budgets separately.
+
+The runtime inserts an exact `*registry.Session -> *BoundSession` mapping before
+EnableDispatch. `Session(handle)` never looks up a reusable instance ID, chooses
+a replacement or authorizes a request. It rejects stale, closed or stopping
+handles. Callers still authenticate/authorize the selected registry decision and
+recheck its route before dispatch. Registration/renewal never activates pending
+routes. `Ready(ctx)` checks this component's listener, publication, SQLite and
+additional dependency health; real 120s replay warmup remains not-ready while
+healthy registrations and renewals are allowed. It is not whole-gateway readyz.
+`Stats()` reports actual ticket/handshake/map counts and reserved bytes.
+
+Always call `Shutdown(ctx)`, including after Serve errors or before Serve was
+started. Shutdown stops resolution/admission first, sends normal closes while
+UDP can transmit, then closes transport/socket and waits for tickets/workers.
+Store close follows native exchanges and outstanding callbacks, preserving the
+control owner lock throughout cleanup. Caller timeout does not drop ownership;
+background completion continues and another Shutdown can wait again. A closed
+listener or native context alone does not free an admitted ticket. ControlStore
+and ReplayStore expose operations to trusted components; do not close them or
+acquire registration leases outside this runtime's accounting. Shared ownership
+with another registration transport needs a future combined lifecycle owner.
+
+Tests use real UDP, mTLS/SPIFFE, SQLite and the pinned SDK. They cover startup
+refusal/cleanup, missing state, handshake/IP/global/service/window budgets,
+failed/stalled TLS, wrong ALPN, map-before-dispatch and stale-handle reconnect,
+registered-but-unready warmup, static server certificate expiry, close-before-
+socket shutdown, blocked registry/callback cleanup, retained store ownership and
+shutdown/serve races. Full gateway launcher/YAML and key loaders, Admin mutation
+publication, public/service ingress composition, WSS/WebSocket and native Windows
+runtime/production load acceptance remain separate work.

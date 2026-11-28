@@ -67,6 +67,16 @@ func NewDurableAdmission(config DurableAdmissionConfig) (*DurableAdmission, erro
 		return nil, controlstate.ErrConfig
 	}
 	config.Renewal = renewal
+	// The pinned SDK prepays native lease and command-history accounting inside
+	// BufferBytes (sessionstate README). Fund the advertised peak at startup,
+	// rather than committing a registration whose ack the model must reject.
+	commands := config.Bound.MaxCommands
+	if commands == 0 {
+		commands = 64
+	}
+	if config.Policy.Limits.BufferBytes < config.Policy.Limits.MaxInflight*64+commands*128 {
+		return nil, controlstate.ErrConfig
+	}
 	gate, err := newRegistrationGate(config.Limits, config.Owner.ServiceIDs())
 	if err != nil {
 		return nil, err
@@ -80,6 +90,10 @@ func NewDurableAdmission(config DurableAdmissionConfig) (*DurableAdmission, erro
 // native cleanup. The returned session still needs transport-map publication
 // and EnableDispatch, and pending routes remain pending.
 func (a *DurableAdmission) Accept(ctx context.Context, conn *quic.Conn) (*BoundSession, error) {
+	return a.accept(ctx, conn, nil)
+}
+
+func (a *DurableAdmission) accept(ctx context.Context, conn *quic.Conn, permit func(tls.ConnectionState) error) (*BoundSession, error) {
 	if conn == nil {
 		return nil, controlstate.ErrConfig
 	}
@@ -90,6 +104,11 @@ func (a *DurableAdmission) Accept(ctx context.Context, conn *quic.Conn) (*BoundS
 		return nil, controlstate.ErrDenied
 	}
 	return AcceptBound(ctx, conn, a.config.Owner.Routes(), a.config.Bound, func(ctx context.Context, state tls.ConnectionState, credential []byte, reg v1.Register) (Binding, error) {
+		if permit != nil {
+			if err := permit(state); err != nil {
+				return Binding{}, registrationRejection(err)
+			}
+		}
 		return a.admit(ctx, state, ip, credential, reg)
 	})
 }
