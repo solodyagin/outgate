@@ -34,20 +34,36 @@ reservations. `MaxRequests` ограничивает одновременно в
 readiness. Во время 120s replay warmup service ingress получает 503 до входа в
 signed pipeline; registration/renewal могут продолжаться по правилам QUIC runtime.
 
-Ошибка любого Serve запускает общую остановку. `Shutdown(ctx)` немедленно
-запрещает новые handlers/probes и QUIC admission/resolution, отменяет HTTP contexts
-и закрывает сети. QUIC отправляет close до закрытия UDP. Stores закрываются только
-после возврата всех HTTP handlers/probes и native QUIC owners/checkers. Истечение
-caller context возвращает ошибку, сохраняя ownership; cleanup продолжается фоном,
-повторный Shutdown может дождаться его завершения. Вызывать Shutdown обязательно
-и после ошибки Serve. Прямой `quictunnel.Stop()` закрывает только admission/сеть;
-composing owner обязан затем вызвать Shutdown после своих store users.
+`GracefulShutdown(ctx)` сразу запрещает новые HTTP handlers/probes и QUIC
+admission/resolution и снимает readiness. HTTP server прекращает accept, сохраняя
+активные requests; QUIC BeginDrain параллельно запускает Reconnect текущих exact
+sessions. Общий deadline — minimum caller deadline и 30s; новый budget на каждый
+listener/session не создаётся. Пока завершаются handlers/probes и reconnect
+handshakes, HTTP base contexts, UDP и QUIC security renewal остаются живыми.
+Legacy sessions без negotiated quiescent fence закрываются fail-closed.
 
-Это boundary для forced shutdown, а не завершённый production launcher.
-Coordinated reconnect/drain с 30s graceful period, browser ingress, YAML mapping,
-file/keyring/JWKS/certificate reload sources, служебный health listener,
-aggregate process RAM/FD budgets, Admin mutation publication и discovery/revocation
-endpoints остаются отдельной работой. TCP/QUIC reservations не доказывают RSS bound.
+После завершения всех участников либо истечения grace deadline остаток
+отменяется: HTTP contexts/server, QUIC native connections и transport, затем UDP.
+QUIC отправляет close до закрытия UDP. Stores закрываются только после actual
+возврата всех HTTP handlers/probes и native QUIC owners/checkers. Истечение caller
+context возвращает ошибку, сохраняя ownership; cleanup продолжается фоном.
+Повторный GracefulShutdown не продлевает первый maximum budget; более ранняя
+отмена caller его прерывает. Budget ограничивает graceful network period, а не
+время ожидания callback, нарушающего cancellation contract.
+
+`Shutdown(ctx)` сохраняет прежнюю immediate cancellation семантику и может
+прервать уже начатый grace period. Неожиданная ошибка любого Serve также
+немедленно прерывает grace. Ожидаемый http.ErrServerClosed после HTTP Shutdown не
+считается отказом QUIC sibling; последующая настоящая UDP ошибка возвращается
+из Serve. Shutdown/GracefulShutdown нужно дождаться и после ошибки Serve.
+Прямой quictunnel.BeginDrain не закрывает shared stores; composing owner обязан
+вызвать Stop/Shutdown после своих store users. Rejected Serve сохраняет caller
+ownership sockets, включая shutdown до первого Serve.
+
+Deployment launcher, browser ingress, YAML mapping, file/keyring/JWKS/certificate
+reload sources, служебный health listener, aggregate process RAM/FD budgets,
+Admin mutation publication и discovery/revocation endpoints остаются отдельной
+работой. TCP/QUIC reservations не доказывают RSS bound.
 
 Lifecycle tests используют private fake owner для управляемых listener failures,
 handler/health cancellation и overload. Отдельные real SQLite/UDP/TCP+mTLS tests
@@ -55,3 +71,12 @@ handler/health cancellation и overload. Отдельные real SQLite/UDP/TCP+
 health callback и cleanup неуспешного construction. Успешный signed HTTP→QUIC
 streaming и запрет dispatch после replay-time mutation проверяются существующими
 servicecall/quictunnel tests; полной acceptance общего production launcher нет.
+
+Graceful lifecycle tests проверяют оба порядка HTTP/QUIC completion без раннего
+cancel, общий deadline/default30s, admission denial during grace,
+immediate abort, UDP failure после intentional HTTP shutdown и timeout с retained
+stores под blocked health callback. Real SQLite/QUIC/pinned SDK driver проверяет
+validated reconnect во время replay warmup без его сокращения; blocked registry
+cleanup сохраняет native quotas/store ownership и после forced stop. Полный
+signed HTTP→QUIC exchange общего runtime после restart barrier и native Windows
+runtime acceptance остаются отдельной проверкой.

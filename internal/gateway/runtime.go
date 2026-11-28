@@ -35,9 +35,9 @@ type Config struct {
 }
 
 // Runtime owns both ingress listeners and one pair of provisioned stores.
-// Shutdown must be called even after Serve fails. This boundary performs forced
-// cancellation; coordinated reconnect/drain and a deployment launcher remain
-// separate work. It does not initialize or repair state.
+// Shutdown must be called even after Serve fails. GracefulShutdown coordinates
+// HTTP completion and QUIC reconnect; Shutdown forces immediate cancellation.
+// It does not initialize or repair state.
 type Runtime struct {
 	mu                             sync.Mutex
 	tunnel                         tunnelOwner
@@ -52,6 +52,8 @@ type Runtime struct {
 	handlers                       sync.WaitGroup
 	serveDone, closed              chan struct{}
 	stopOnce                       sync.Once
+	forceOnce                      sync.Once
+	force                          chan struct{}
 	closeErr                       error
 }
 
@@ -59,6 +61,7 @@ type tunnelOwner interface {
 	Serve(net.PacketConn) error
 	Ready(context.Context) error
 	Stop()
+	BeginDrain(time.Time) <-chan struct{}
 	Shutdown(context.Context) error
 }
 
@@ -150,7 +153,7 @@ func exactResolver(resolve func(*registry.Session) (*quictunnel.BoundSession, er
 
 func newRuntime(tunnel tunnelOwner, server *http.Server, limits servicecall.ConnectionLimits, maxRequests int) *Runtime {
 	ctx, cancel := context.WithCancel(context.Background())
-	r := &Runtime{tunnel: tunnel, server: server, handler: server.Handler, maxRequests: maxRequests, cancel: cancel, serveDone: make(chan struct{}), closed: make(chan struct{})}
+	r := &Runtime{tunnel: tunnel, server: server, handler: server.Handler, maxRequests: maxRequests, cancel: cancel, serveDone: make(chan struct{}), closed: make(chan struct{}), force: make(chan struct{})}
 	server.BaseContext = func(net.Listener) context.Context { return ctx }
 	server.Handler = http.HandlerFunc(r.serveHTTP)
 	// Wrap when Serve receives the socket, rather than opening a listener here.
@@ -235,26 +238,92 @@ func (r *Runtime) Serve(listener net.Listener, packet net.PacketConn) error {
 	r.listener = limited
 	r.packet = packet
 	r.mu.Unlock()
-	results := make(chan error, 2)
-	go func() { results <- r.server.ServeTLS(&servingListener{Listener: limited, runtime: r}, "", "") }()
-	go func() { results <- r.tunnel.Serve(packet) }()
-	first := <-results
-	r.stop()
-	<-results
+	type serveResult struct {
+		err  error
+		http bool
+	}
+	results := make(chan serveResult, 2)
+	go func() {
+		results <- serveResult{r.server.ServeTLS(&servingListener{Listener: limited, runtime: r}, "", ""), true}
+	}()
+	go func() { results <- serveResult{r.tunnel.Serve(packet), false} }()
+	var first, failure error
+	for i := 0; i < 2; i++ {
+		result := <-results
+		if i == 0 {
+			first = result.err
+		}
+		r.mu.Lock()
+		intentional := r.stopping && (result.http && errors.Is(result.err, http.ErrServerClosed) || !result.http && errors.Is(result.err, quictunnel.ErrRuntimeClosed))
+		r.mu.Unlock()
+		if !intentional {
+			if failure == nil {
+				failure = result.err
+			}
+			r.stop()
+		}
+	}
+
 	close(r.serveDone)
+	if failure != nil {
+		return failure
+	}
 	return first
 }
 
 func (r *Runtime) stop() {
+	r.forceOnce.Do(func() { close(r.force) })
+	r.beginShutdown(false, time.Time{})
+	r.cancel()
+	r.tunnel.Stop()
+}
+
+func (r *Runtime) beginShutdown(graceful bool, deadline time.Time) {
 	r.stopOnce.Do(func() {
 		r.mu.Lock()
 		r.stopping = true
-		started := r.started
-		listener := r.listener
+		started, listener := r.started, r.listener
 		r.mu.Unlock()
-		r.cancel()
-		r.tunnel.Stop()
+		handlersDone := make(chan struct{})
+		go func() { r.handlers.Wait(); close(handlersDone) }()
+		var grace context.Context
+		var cancel context.CancelFunc
+		var tunnelDone <-chan struct{}
+		httpDone := make(chan struct{})
+		if graceful {
+			limit := time.Now().Add(30 * time.Second)
+			if deadline.IsZero() || deadline.After(limit) {
+				deadline = limit
+			}
+			grace, cancel = context.WithDeadline(context.Background(), deadline)
+			tunnelDone = r.tunnel.BeginDrain(deadline)
+			go func() { _ = r.server.Shutdown(grace); close(httpDone) }()
+		}
 		go func() {
+			if graceful {
+				// Each channel is observed once. A slow session cannot give another
+				// listener or handler a fresh budget, and abort does not wait on callbacks.
+				for tunnelDone != nil || httpDone != nil || handlersDone != nil {
+					select {
+					case <-tunnelDone:
+						tunnelDone = nil
+					case <-httpDone:
+						httpDone = nil
+					case <-handlersDone:
+						handlersDone = nil
+					case <-grace.Done():
+						goto force
+					case <-r.force:
+						goto force
+					}
+				}
+			}
+		force:
+			if cancel != nil {
+				cancel()
+			}
+			r.cancel()
+			r.tunnel.Stop()
 			_ = r.server.Close()
 			if listener != nil {
 				_ = listener.Close()
@@ -264,13 +333,34 @@ func (r *Runtime) stop() {
 			}
 			r.handlers.Wait()
 			r.closeErr = r.tunnel.Shutdown(context.Background())
-			// Covers Stop racing before the QUIC Serve call accepted socket ownership.
 			if r.packet != nil {
 				_ = r.packet.Close()
 			}
 			close(r.closed)
 		}()
 	})
+}
+
+// GracefulShutdown rejects new work immediately, then gives HTTP handlers and
+// QUIC reconnect handshakes one shared budget: the earlier of ctx's deadline and
+// 30 seconds. Context cancellation or Shutdown aborts the grace period. Stores
+// remain owned through actual cleanup even if this caller stops waiting. The
+// first graceful call fixes the maximum budget; later calls cannot extend it.
+func (r *Runtime) GracefulShutdown(ctx context.Context) error {
+	deadline, _ := ctx.Deadline()
+	r.beginShutdown(true, deadline)
+	select {
+	case <-r.closed:
+		return r.closeErr
+	default:
+	}
+	select {
+	case <-r.closed:
+		return r.closeErr
+	case <-ctx.Done():
+		r.stop()
+		return ctx.Err()
+	}
 }
 
 // Shutdown cancels ingress immediately, then retains shared stores until all

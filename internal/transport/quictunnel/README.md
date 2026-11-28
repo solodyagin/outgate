@@ -237,8 +237,21 @@ Tests exercise real QUIC/HTTP3 with the pinned SDK driver: an active upload,
 new-assignment rejection, no retry, cleanup before reconnect intent, shortened
 repeated deadlines, crossed peer drain, timeout, legacy/canceled calls, security
 expiry and revocation after terminal acknowledgement. Their admission remains
-explicitly synthetic. This primitive does not yet coordinate the shared runtime's
-listeners: `gateway.Runtime.Shutdown` still forces cancellation. A production
-launcher must turn off admission/readiness, invoke session reconnect concurrently
-within one bounded grace period, then force-close the remainder while retaining
-stores through actual callback cleanup.
+explicitly synthetic.
+
+`SQLiteRuntime.BeginDrain(deadline)` closes the runtime admission/resolution and
+readiness gates synchronously, then reconnects the current exact session snapshot
+concurrently. The first deadline wins, capped/defaulted to 30s. Security renewal,
+UDP and shared stores stay alive; registrations finishing after this gate are
+closed before dispatch publication. Its completion channel means reconnect
+callers returned, not that every native cleanup callback finished. Legacy peers
+are closed without fabricating a fence. Stop preempts without waiting on session
+or registry locks; Shutdown still retains tickets/stores until actual cleanup.
+Stats distinguish Draining from Stopping.
+
+`gateway.Runtime.GracefulShutdown` coordinates this phase with HTTP completion in
+one grace budget, then force-stops the remainder. Direct BeginDrain callers must
+arrange Stop/Shutdown themselves. Real SQLite/mTLS/pinned SDK tests cover validated
+reconnect during replay warmup, pre-TLS denial and retained quota/ownership behind
+blocked registry cleanup. Production launcher/key sources and native Windows/load
+acceptance remain separate work.

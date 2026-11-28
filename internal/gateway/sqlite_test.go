@@ -135,7 +135,7 @@ func TestSQLiteCompositionPreservesBarrierAndRetainsBothStores(t *testing.T) {
 	await(t, entered)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
-	if !errors.Is(r.Shutdown(ctx), context.DeadlineExceeded) {
+	if !errors.Is(r.GracefulShutdown(ctx), context.DeadlineExceeded) {
 		t.Fatal("released blocked health owner")
 	}
 	if _, err = owner.ControlStore().Revision(t.Context()); err != nil {

@@ -43,7 +43,7 @@ func (r *SQLiteRuntime) connectionContext(ctx context.Context, info *quic.Client
 	}
 	r.mu.Lock()
 	peer := r.peers[ip]
-	if r.stopping || len(r.tickets) >= r.limits.MaxConnections || peer.connections >= r.limits.ConnectionsPerIP || r.handshakes >= r.limits.MaxHandshakes || peer.handshakes >= r.limits.HandshakesPerIP || r.reserved > r.limits.BufferBytes-r.charge {
+	if r.stopping || r.draining || len(r.tickets) >= r.limits.MaxConnections || peer.connections >= r.limits.ConnectionsPerIP || r.handshakes >= r.limits.MaxHandshakes || peer.handshakes >= r.limits.HandshakesPerIP || r.reserved > r.limits.BufferBytes-r.charge {
 		r.mu.Unlock()
 		return nil, controlstate.ErrRegistrationQuota
 	}
@@ -72,7 +72,7 @@ func (r *SQLiteRuntime) attach(conn *quic.Conn) *runtimeTicket {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if ticket.released || ticket.attached || r.stopping {
+	if ticket.released || ticket.attached || r.stopping || r.draining {
 		return nil
 	}
 	ticket.attached = true
@@ -96,7 +96,7 @@ func (r *SQLiteRuntime) bindService(ticket *runtimeTicket, id string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	used, known := r.services[id]
-	if r.stopping || ticket.released || !known {
+	if r.stopping || r.draining || ticket.released || !known {
 		return controlstate.ErrDenied
 	}
 	if ticket.service != "" || used > r.limits.BufferBytesPerService-r.charge {

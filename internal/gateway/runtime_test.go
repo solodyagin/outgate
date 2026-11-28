@@ -31,6 +31,8 @@ type testOwner struct {
 	serving, closed atomic.Bool
 	health          func(context.Context) error
 	fail            error
+	drain           func(time.Time) <-chan struct{}
+	failure         chan error
 }
 
 func (o *testOwner) Serve(net.PacketConn) error {
@@ -38,8 +40,20 @@ func (o *testOwner) Serve(net.PacketConn) error {
 		return o.fail
 	}
 	o.serving.Store(true)
-	<-o.stop
-	return ErrClosed
+	select {
+	case <-o.stop:
+		return quictunnel.ErrRuntimeClosed
+	case err := <-o.failure:
+		return err
+	}
+}
+func (o *testOwner) BeginDrain(deadline time.Time) <-chan struct{} {
+	if o.drain != nil {
+		return o.drain(deadline)
+	}
+	done := make(chan struct{})
+	close(done)
+	return done
 }
 func (o *testOwner) Stop()                          { o.once.Do(func() { close(o.stop) }) }
 func (o *testOwner) Shutdown(context.Context) error { o.closed.Store(true); return nil }
@@ -223,24 +237,36 @@ func TestListenerFailureStopsSibling(t *testing.T) {
 }
 
 func TestShutdownBeforeServeRetainsRejectedSockets(t *testing.T) {
-	owner := &testOwner{stop: make(chan struct{})}
-	certificate, _ := testCertificate(t)
-	r := newRuntime(owner, &http.Server{Handler: http.NotFoundHandler(), TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}}}, servicecall.ConnectionLimits{MaxConnections: 1, ConnectionsPerIP: 1}, 1)
-	check(t, r.Shutdown(t.Context()))
-	tcp, err := net.Listen("tcp", "127.0.0.1:0")
-	check(t, err)
-	defer tcp.Close()
-	udp, err := net.ListenPacket("udp", "127.0.0.1:0")
-	check(t, err)
-	defer udp.Close()
-	if !errors.Is(r.Serve(tcp, udp), ErrClosed) {
-		t.Fatal("accepted after shutdown")
-	}
-	probe, err := net.DialTimeout("tcp", tcp.Addr().String(), time.Second)
-	check(t, err)
-	probe.Close()
-	if _, err := udp.WriteTo([]byte{1}, udp.LocalAddr()); err != nil {
-		t.Fatal("closed rejected socket", err)
+	for _, graceful := range []bool{false, true} {
+		name := "immediate"
+		if graceful {
+			name = "graceful"
+		}
+		t.Run(name, func(t *testing.T) {
+			owner := &testOwner{stop: make(chan struct{})}
+			certificate, _ := testCertificate(t)
+			r := newRuntime(owner, &http.Server{Handler: http.NotFoundHandler(), TLSConfig: &tls.Config{Certificates: []tls.Certificate{certificate}}}, servicecall.ConnectionLimits{MaxConnections: 1, ConnectionsPerIP: 1}, 1)
+			if graceful {
+				check(t, r.GracefulShutdown(t.Context()))
+			} else {
+				check(t, r.Shutdown(t.Context()))
+			}
+			tcp, err := net.Listen("tcp", "127.0.0.1:0")
+			check(t, err)
+			defer tcp.Close()
+			udp, err := net.ListenPacket("udp", "127.0.0.1:0")
+			check(t, err)
+			defer udp.Close()
+			if !errors.Is(r.Serve(tcp, udp), ErrClosed) {
+				t.Fatal("accepted after shutdown")
+			}
+			probe, err := net.DialTimeout("tcp", tcp.Addr().String(), time.Second)
+			check(t, err)
+			probe.Close()
+			if _, err := udp.WriteTo([]byte{1}, udp.LocalAddr()); err != nil {
+				t.Fatal("closed rejected socket", err)
+			}
+		})
 	}
 }
 

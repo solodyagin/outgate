@@ -35,6 +35,9 @@ type SQLiteRuntime struct {
 	ctx                                         context.Context
 	cancel                                      context.CancelFunc
 	started, serveEnded, stopping, networkEnded bool
+	draining                                    bool
+	drainOnce                                   sync.Once
+	drainDone                                   chan struct{}
 	transport                                   *quic.Transport
 	listener                                    *quic.Listener
 	packet                                      net.PacketConn
@@ -109,7 +112,7 @@ func OpenSQLiteRuntime(ctx context.Context, config SQLiteRuntimeConfig, limits R
 		return fail(err)
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
-	r := &SQLiteRuntime{limits: limits, charge: charge, tls: tlsConfig, quic: quicConfig, control: store, replay: replayStore, owner: owner, admission: admission, ctx: lifetime, cancel: cancel, peers: make(map[netip.Addr]runtimePeer), services: make(map[string]int64), tickets: make(map[*runtimeTicket]struct{}), sessions: make(map[*registry.Session]*BoundSession), drained: make(chan struct{}), closed: make(chan struct{})}
+	r := &SQLiteRuntime{limits: limits, charge: charge, tls: tlsConfig, quic: quicConfig, control: store, replay: replayStore, owner: owner, admission: admission, ctx: lifetime, cancel: cancel, peers: make(map[netip.Addr]runtimePeer), services: make(map[string]int64), tickets: make(map[*runtimeTicket]struct{}), sessions: make(map[*registry.Session]*BoundSession), drained: make(chan struct{}), drainDone: make(chan struct{}), closed: make(chan struct{})}
 	for _, id := range owner.ServiceIDs() {
 		r.services[id] = 0
 	}
@@ -124,7 +127,7 @@ func (r *SQLiteRuntime) Serve(packet net.PacketConn) error {
 		return controlstate.ErrConfig
 	}
 	r.mu.Lock()
-	if r.started || r.stopping {
+	if r.started || r.stopping || r.draining {
 		r.mu.Unlock()
 		return ErrRuntimeClosed
 	}
@@ -180,7 +183,7 @@ func (r *SQLiteRuntime) handle(conn *quic.Conn, ticket *runtimeTicket) {
 		return
 	}
 	r.mu.Lock()
-	stopping := r.stopping
+	stopping := r.stopping || r.draining
 	if !stopping {
 		r.sessions[bound.Handle()] = bound
 	}
@@ -203,7 +206,7 @@ func (r *SQLiteRuntime) Session(handle *registry.Session) (*BoundSession, error)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	bound := r.sessions[handle]
-	if r.stopping || bound == nil {
+	if r.stopping || r.draining || bound == nil {
 		return nil, ErrRuntimeClosed
 	}
 	select {
@@ -227,7 +230,7 @@ func (r *SQLiteRuntime) ReplayStore() *replay.SQLite       { return r.replay }
 // A healthy warming replay store still returns not-ready; it permits registration.
 func (r *SQLiteRuntime) Ready(ctx context.Context) error {
 	r.mu.Lock()
-	serving := r.listener != nil && !r.stopping
+	serving := r.listener != nil && !r.stopping && !r.draining
 	r.mu.Unlock()
 	if !serving {
 		return ErrRuntimeClosed
@@ -244,7 +247,7 @@ func (r *SQLiteRuntime) Ready(ctx context.Context) error {
 		return err
 	}
 	r.mu.Lock()
-	stopped := r.stopping
+	stopped := r.stopping || r.draining
 	r.mu.Unlock()
 	if stopped {
 		return ErrRuntimeClosed
@@ -255,13 +258,50 @@ func (r *SQLiteRuntime) Ready(ctx context.Context) error {
 type RuntimeStats struct {
 	Connections, Handshakes, Sessions int
 	ReservedBytes                     int64
-	Stopping                          bool
+	Stopping, Draining                bool
 }
 
 func (r *SQLiteRuntime) Stats() RuntimeStats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return RuntimeStats{len(r.tickets), r.handshakes, len(r.sessions), r.reserved, r.stopping}
+	return RuntimeStats{Connections: len(r.tickets), Handshakes: r.handshakes, Sessions: len(r.sessions), ReservedBytes: r.reserved, Stopping: r.stopping, Draining: r.draining}
+}
+
+// BeginDrain atomically disables new admission, readiness and handle resolution.
+// Existing sessions reconnect concurrently within one deadline (default/max 30s).
+// It keeps UDP, security renewal and stores alive. The returned channel closes
+// when reconnect callers return, not necessarily when all native cleanup ends.
+// Repeated calls retain the first deadline. Stop may preempt at any time;
+// Shutdown remains required after external store users have finished.
+func (r *SQLiteRuntime) BeginDrain(deadline time.Time) <-chan struct{} {
+	r.drainOnce.Do(func() {
+		limit := time.Now().Add(30 * time.Second)
+		if deadline.IsZero() || deadline.After(limit) {
+			deadline = limit
+		}
+		r.mu.Lock()
+		r.draining = true
+		sessions := make([]*BoundSession, 0, len(r.sessions))
+		for _, bound := range r.sessions {
+			sessions = append(sessions, bound)
+		}
+		r.mu.Unlock()
+		ctx, cancel := context.WithDeadline(r.ctx, deadline)
+		go func() {
+			defer cancel()
+			var pending sync.WaitGroup
+			for _, bound := range sessions {
+				pending.Go(func() {
+					if err := bound.Reconnect(ctx); err != nil {
+						_ = bound.Close(ctx)
+					}
+				})
+			}
+			pending.Wait()
+			close(r.drainDone)
+		}()
+	})
+	return r.drainDone
 }
 
 // Stop immediately disables admission/resolution and starts network cleanup,
