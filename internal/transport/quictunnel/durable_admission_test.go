@@ -35,6 +35,11 @@ type durableFixture struct {
 
 func durableAdmissionFixture(t *testing.T) *durableFixture {
 	t.Helper()
+	return durableAdmissionFixtureTTL(t, 10*time.Minute)
+}
+
+func durableAdmissionFixtureTTL(t *testing.T, ttl time.Duration) *durableFixture {
+	t.Helper()
 	reg, _ := Fixtures(t, true)
 	reg.ProtocolMinor = 1
 	reg.Capabilities = append(reg.Capabilities, "credential_generation")
@@ -55,7 +60,7 @@ func durableAdmissionFixture(t *testing.T) *durableFixture {
 		must(t, err)
 		return controlstate.Change{OperationID: op.String(), Actor: "operator", ExpectedRevision: rev, Reason: "QUIC durable admission acceptance"}
 	}
-	issued, err := store.IssueGrant(t.Context(), change(1), controlstate.GrantBinding{ServiceID: reg.ServiceID, InstanceID: reg.InstanceID, Version: reg.Version, Paths: reg.Paths, Mounts: reg.Mounts, PathMode: reg.PathMode, RewriteMountHeaders: reg.RewriteMountHeaders, SPKI: hex.EncodeToString(spki[:]), ArtifactDigest: "sha256:" + strings.Repeat("a", 64), ExpiresAt: time.Now().Add(10 * time.Minute), CredentialGeneration: 7})
+	issued, err := store.IssueGrant(t.Context(), change(1), controlstate.GrantBinding{ServiceID: reg.ServiceID, InstanceID: reg.InstanceID, Version: reg.Version, Paths: reg.Paths, Mounts: reg.Mounts, PathMode: reg.PathMode, RewriteMountHeaders: reg.RewriteMountHeaders, SPKI: hex.EncodeToString(spki[:]), ArtifactDigest: "sha256:" + strings.Repeat("a", 64), ExpiresAt: time.Now().Add(ttl), CredentialGeneration: 7})
 	must(t, err)
 	rc := registry.Config{Services: map[string]registry.ServiceConfig{reg.ServiceID: {AllowedPaths: reg.Paths, Rollout: registry.Rollout{Stable: reg.Version}}}}
 	bootstrap, err := registry.New(rc)
@@ -110,7 +115,7 @@ func TestDurableAdmissionRealQUICAckAndRecoveryBarrier(t *testing.T) {
 	bound, carrier, ack, openErr, acceptErr := f.open(t, a)
 	must(t, openErr)
 	must(t, acceptErr)
-	if checks.Load() != 2 || ack.Limits.MaxInflight != 1 || ack.ProtocolMinor != 1 || ack.CredentialGeneration == nil || *ack.CredentialGeneration != 7 || ack.CredentialExpiresAt == nil || ack.ReadyNotBefore != barrier.Unix()+1 {
+	if checks.Load() < 2 || ack.Limits.MaxInflight != 1 || ack.ProtocolMinor != 1 || ack.CredentialGeneration == nil || *ack.CredentialGeneration != 7 || ack.CredentialExpiresAt == nil || ack.ReadyNotBefore != barrier.Unix()+1 {
 		t.Fatal("ack lost verified/negotiated values", ack)
 	}
 	for _, path := range ack.Paths {
@@ -235,7 +240,7 @@ func TestDurableAdmissionGateBeforeCredentialWork(t *testing.T) {
 func TestDurableAdmissionRejectsInvalidConfiguration(t *testing.T) {
 	f := durableAdmissionFixture(t)
 	for _, mutate := range []func(*DurableAdmissionConfig){
-		func(c *DurableAdmissionConfig) { c.Owner = nil }, func(c *DurableAdmissionConfig) { c.Security = nil }, func(c *DurableAdmissionConfig) { c.TrustDomain = "invalid:443" }, func(c *DurableAdmissionConfig) { c.Bound.Transport.Development = true }, func(c *DurableAdmissionConfig) { c.Bound.MaxCommands = 2049 }, func(c *DurableAdmissionConfig) { c.Policy.Limits.MaxControlBytes = 1 }, func(c *DurableAdmissionConfig) { c.Limits.MaxConcurrent = 0 }, func(c *DurableAdmissionConfig) { c.Policy.Timeouts.RegisterMS = 10001 }, func(c *DurableAdmissionConfig) { c.Bound.Transport.RegisterTimeout = time.Second },
+		func(c *DurableAdmissionConfig) { c.Owner = nil }, func(c *DurableAdmissionConfig) { c.Security = nil }, func(c *DurableAdmissionConfig) { c.TrustDomain = "invalid:443" }, func(c *DurableAdmissionConfig) { c.Bound.Transport.Development = true }, func(c *DurableAdmissionConfig) { c.Bound.MaxCommands = 2049 }, func(c *DurableAdmissionConfig) { c.Renewal.Interval = 2 * time.Second }, func(c *DurableAdmissionConfig) { c.Renewal.Timeout = 2 * time.Second }, func(c *DurableAdmissionConfig) { c.Policy.Limits.MaxControlBytes = 1 }, func(c *DurableAdmissionConfig) { c.Limits.MaxConcurrent = 0 }, func(c *DurableAdmissionConfig) { c.Policy.Timeouts.RegisterMS = 10001 }, func(c *DurableAdmissionConfig) { c.Bound.Transport.RegisterTimeout = time.Second },
 	} {
 		config := f.config
 		mutate(&config)

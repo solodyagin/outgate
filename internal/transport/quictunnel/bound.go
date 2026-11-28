@@ -29,6 +29,10 @@ type Binding struct {
 	Ack              v1.RegisterAck
 	SecurityReady    bool
 	SecurityDeadline time.Time
+	// RenewSecurity opts into a separately renewable freshness lease. Nil retains
+	// the legacy non-extending SetSecurity deadline behavior.
+	RenewSecurity func(context.Context) (SecurityLease, error)
+	Renewal       SecurityRenewal
 }
 type Admit func(context.Context, tls.ConnectionState, []byte, v1.Register) (Binding, error)
 
@@ -45,6 +49,12 @@ type BoundOptions struct {
 // fail-closed rather than inventing cross-stream ordering guarantees.
 type BoundSession struct {
 	mu             sync.Mutex
+	expiryMu       sync.Mutex
+	expiryTimer    *time.Timer
+	expiryDeadline time.Time
+	expiryHard     time.Time
+	expiryLease    time.Time
+	expiryFired    bool
 	model          *sessionstate.State
 	routes         *registry.Registry
 	handle         *registry.Session
@@ -58,10 +68,13 @@ type BoundSession struct {
 	cause          error
 	release        func()
 	stopOnce       sync.Once
+	closeOnce      sync.Once
 	requests       sync.WaitGroup
 	done           chan struct{}
 	readerDone     chan struct{}
 	timerDone      chan struct{}
+	renewalDone    chan struct{}
+	timerWake      chan struct{}
 	writerDone     chan struct{}
 	wake           chan struct{}
 	pending        []nativeControl
@@ -102,6 +115,10 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 	owned := false
 	var release func()
 	fenceCap := false
+	var renew func(context.Context) (SecurityLease, error)
+	var renewal SecurityRenewal
+	var securityDeadline time.Time
+	var credentialDeadline time.Time
 	raw, err := Accept(ctx, conn, options.Transport, func(ctx context.Context, peer tls.ConnectionState, credential []byte, reg v1.Register) (v1.RegisterAck, error) {
 		now := time.Now()
 		if err := model.Begin(now); err != nil {
@@ -139,8 +156,21 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 		if _, err = model.Apply(sessionstate.Gateway, ack, now); err != nil {
 			return v1.RegisterAck{}, err
 		}
-		if _, err = model.Security(binding.SecurityReady, binding.SecurityDeadline, now); err != nil {
+		if binding.RenewSecurity != nil {
+			renewal, err = binding.Renewal.normalized()
+			if err != nil {
+				return v1.RegisterAck{}, err
+			}
+			_, err = model.RenewSecurity(binding.SecurityReady, binding.SecurityDeadline, now)
+		} else {
+			_, err = model.Security(binding.SecurityReady, binding.SecurityDeadline, now)
+		}
+		if err != nil {
 			return v1.RegisterAck{}, err
+		}
+		renew, securityDeadline = binding.RenewSecurity, binding.SecurityDeadline
+		if ack.CredentialExpiresAt != nil {
+			credentialDeadline = time.Unix(*ack.CredentialExpiresAt, 0)
 		}
 		fenceCap = v1.HasQUICQuiescentFence(ack)
 		return ack, nil
@@ -161,12 +191,17 @@ func AcceptBound(ctx context.Context, conn *quic.Conn, routes *registry.Registry
 	s.release = release
 	s.fenceCap = fenceCap
 	s.maxCommands = options.MaxCommands
+	s.renewalDone = make(chan struct{})
+	s.timerWake = make(chan struct{}, 1)
 	s.pending = make([]nativeControl, 0, options.MaxCommands)
 	s.wake = make(chan struct{}, 1)
 	s.writerDone = make(chan struct{})
+	_ = s.armExpiry(credentialDeadline, false)
+	_ = s.armExpiry(securityDeadline, renew != nil)
 	go s.readLoop()
 	go s.timerLoop()
 	go s.writerLoop()
+	go s.renewalLoop(renew, renewal, securityDeadline)
 	return s, nil
 }
 
@@ -238,32 +273,39 @@ func (s *BoundSession) readLoop() {
 }
 func (s *BoundSession) timerLoop() {
 	defer close(s.timerDone)
-	ticker := time.NewTicker(s.interval)
-	defer ticker.Stop()
+	timer := time.NewTimer(time.Nanosecond)
+	defer timer.Stop()
 	for {
 		select {
 		case <-s.ctx.Done():
 			return
-		case <-ticker.C:
-			s.mu.Lock()
-			if s.closing {
-				s.mu.Unlock()
-				return
-			}
-			if s.terminalWrite {
-				s.mu.Unlock()
-				continue
-			}
-			effect, err := s.model.Advance(time.Now())
-			if err == nil {
-				err = s.syncReadyLocked()
-			}
-			s.mu.Unlock()
-			if err != nil || effect.CloseTransport {
-				s.stop(err)
-				return
-			}
+		case <-s.timerWake:
+		case <-timer.C:
 		}
+		s.mu.Lock()
+		if s.closing {
+			s.mu.Unlock()
+			return
+		}
+		if s.terminalWrite {
+			s.mu.Unlock()
+			timer.Reset(s.interval)
+			continue
+		}
+		effect, err := s.model.Advance(time.Now())
+		if err == nil {
+			err = s.syncReadyLocked()
+		}
+		delay := s.interval
+		if deadline := s.model.Snapshot().Deadline; !deadline.IsZero() {
+			delay = min(delay, max(time.Nanosecond, time.Until(deadline)))
+		}
+		s.mu.Unlock()
+		if err != nil || effect.CloseTransport {
+			s.stop(err)
+			return
+		}
+		timer.Reset(delay)
 	}
 }
 
@@ -275,9 +317,13 @@ func (s *BoundSession) SetSecurity(ready bool, deadline time.Time) error {
 	}
 	effect, err := s.model.Security(ready, deadline, time.Now())
 	if err == nil {
+		err = s.armExpiry(deadline, false)
+	}
+	if err == nil {
 		err = s.syncReadyLocked()
 	}
 	s.mu.Unlock()
+	s.signalTimer()
 	if err != nil || effect.CloseTransport {
 		s.stop(err)
 	}
@@ -337,7 +383,12 @@ func (s *BoundSession) RoundTrip(req *http.Request) (*http.Response, error) {
 // upload reader violating net/http's concurrent Close contract retains the old
 // registration and blocks replacement; it never silently enables a new session.
 func (s *BoundSession) Close(ctx context.Context) error {
-	s.stop(context.Canceled)
+	// Exactly one stop request can wait behind local lifecycle/registry locks.
+	// Native cancellation and the caller's timeout do not wait for those locks.
+	s.closeOnce.Do(func() {
+		s.cancel()
+		go func() { _ = s.conn.CloseWithError(quiccontrol.CodeNormal, "normal"); s.stop(context.Canceled) }()
+	})
 	select {
 	case <-s.done:
 		return nil
@@ -351,6 +402,11 @@ func (s *BoundSession) stop(cause error) {
 			cause = sessionstate.ErrState
 		}
 		s.mu.Lock()
+		s.expiryMu.Lock()
+		if s.expiryFired {
+			cause = sessionstate.ErrSecurity
+		}
+		s.expiryMu.Unlock()
 		snapshot := s.model.Snapshot()
 		// After the terminal ack, the model's remaining deadline is security/
 		// credential expiry (drain deadlines were consumed by finish). It must
@@ -365,6 +421,10 @@ func (s *BoundSession) stop(cause error) {
 			_, _ = s.model.Revoke(time.Now())
 		} else if snapshot.TransportActive {
 			_, _ = s.model.Disconnected(false, time.Now())
+		}
+		if errors.Is(cause, sessionstate.ErrSecurity) {
+			_ = s.conn.CloseWithError(quiccontrol.CodeCredentialRevoked, "credential_revoked")
+			s.cancel()
 		}
 		_ = s.routes.SetReady(s.handle, false)
 		_ = s.routes.Drain(s.handle)
@@ -384,6 +444,8 @@ func (s *BoundSession) cleanup(cause error) {
 	<-s.readerDone
 	<-s.timerDone
 	<-s.writerDone
+	<-s.renewalDone
+	s.stopExpiry()
 	s.mu.Lock()
 	_ = s.routes.Disconnect(s.handle)
 	if err := s.model.Cleaned(time.Now()); err != nil {

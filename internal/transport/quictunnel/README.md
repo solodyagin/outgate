@@ -42,7 +42,7 @@ Commit must perform route permission/conflict checks and required durable regist
 
 Binding.Release attaches ownership cleanup to AcceptBound: ack/binding failure closes the connection and releases admission resources; normal cleanup first closes native QUIC/HTTP3, waits for handlers/body cleanup and control loops, removes the registry session, then calls Release outside the session mutex. A blocked application upload retains ownership until actual cleanup, even if Close(ctx) times out. Release is chained with the admission owner's cleanup and must not block forever. A Commit error still requires rollback/resync of its failed registry transaction; it may return a Binding.Release cleanup hook even with an error. AcceptBound closes the connection before invoking that hook and releasing credential ownership. GuardRegistration is intended for AcceptBound; any manual caller must honor nonzero Binding.Release on error as well as success. Committed generation fences remain durable after a later registration/ack error; the same pair can reconnect, and older pairs cannot regain access.
 
-Tests exercise real mTLS/SPIFFE and QUIC with persisted grants, generation ownership and `controlstate.RegistrationOwner` snapshot/outbox publication. They cover successful registration, ack/bind/commit/pre-gate/identity errors, exactly-once release, retained durable ownership after lost ack and a blocked-upload cleanup boundary. The Commit callback can use `RegistrationOwner.Register` and build its ack from the returned registration; its Release must also clean up that fresh session on bind/ack errors. The owner never asserts SecurityReady. The bounded rate/readiness gate and production ack/cleanup wiring are available through DurableAdmission below. Runtime renewal/controller, Admin mutation publication, full production configuration and native Windows runtime acceptance remain separate work.
+Tests exercise real mTLS/SPIFFE and QUIC with persisted grants, generation ownership and `controlstate.RegistrationOwner` snapshot/outbox publication. They cover successful registration, ack/bind/commit/pre-gate/identity errors, exactly-once release, retained durable ownership after lost ack and a blocked-upload cleanup boundary. The Commit callback can use `RegistrationOwner.Register` and build its ack from the returned registration; its Release must also clean up that fresh session on bind/ack errors. The owner never asserts SecurityReady. The bounded rate/readiness gate and production ack/cleanup wiring are available through DurableAdmission below. Bounded security renewal/controller is integrated below; Admin mutation publication, full production configuration and native Windows runtime acceptance remain separate work.
 
 Guard failures use the existing nack table: bad/revoked/stale credentials are nonretryable auth_failed, active ownership is retryable duplicate_instance, resource quotas are retryable quota_exceeded, and opaque storage/commit errors remain state_unavailable. Error details are fixed and contain no credentials.
 
@@ -88,13 +88,53 @@ Missing/stale/invalid/late assertions fail closed. A late health/lease/ack error
 keeps durable ownership, closes the carrier and removes only its fresh session
 before releasing the lease after native cleanup.
 
-After Accept the runtime still publishes the transport mapping, calls
-EnableDispatch and performs security renewal/revocation fanout. There is no
-renewal controller in this factory: without one the initial short security lease
-expires and the connection closes, including during replay warmup. The current
-SDK session model only shortens security deadlines; renewable lease support and
-the controller are the next integration step, not evidence of completed
-production acceptance. Pending routes still require administrative activation.
-Tests use real mTLS/SPIFFE, SQLite and QUIC for successful registered-but-unready
-ack, gate/refill/concurrency limits, pre/post-publication health failures,
-credential/feature rejection, peer closure before ack and lease cleanup.
+After Accept the runtime still publishes the transport mapping and calls
+EnableDispatch. DurableAdmission now installs the bounded renewal controller
+below. Pending routes still require administrative activation. Tests use real
+mTLS/SPIFFE, SQLite and QUIC for registered-but-unready ack, rates, features,
+health failures, peer closure before ack and exact lease cleanup.
+
+## Renewable security freshness
+
+The SDK pin supplies an explicit `sessionstate.RenewSecurity`, separate from
+legacy hard Security deadlines. `Binding.RenewSecurity` opts a BoundSession into
+one sequential checker; nil retains the old non-extending behavior. The factory
+always installs a checker. `SecurityRenewal` defaults to 1s interval and 1s
+per-check timeout; nonzero values may only tighten them. Shorter leases trigger
+an earlier check at half their remaining lifetime. Deadline-aware timers and a native expiry alarm interrupt security/credential
+limits independently of periodic ticks, a blocked callback, or a session/registry
+lock held during SQL publication. The alarm retains separate hard/renewable
+bounds and never substitutes a security error for a drain timeout.
+
+Each factory renewal checks the publication barrier, private registration lease
+ownership, current grant/expiry/generation/revocations, and the required Security
+source. The new deadline cannot exceed the check's start +5s, source freshness,
+certificate NotAfter or grant expiry. The factory's separate checker pool is
+bounded by Limits.MaxConcurrent; saturation fails closed without queuing SQL.
+Source error, timeout, stale assertion, lost ownership, revocation or closed
+publication barrier invokes Revoke and cancels native exchanges. A future replay
+barrier keeps a healthy initial session registered-but-unready; barriers cannot
+be shortened by later assertions. A new recovery window after the old barrier
+elapsed revokes the old transport (including admitted flows); reconnect can join
+the new warmup. Renewal never refreshes peer status/probes, activates a route,
+changes drain/fence intent, extends hard limits or revives a terminal transport.
+
+`SQLiteAdmissionSecurity(control, replayStore)` provides a real source for
+explicitly provisioned stores. It verifies control metadata/file/epoch health
+and replay.Health; replay health also runs during warmup and returns the original
+120s readiness deadline. Ready/Reserve retain the barrier and created cutoff.
+Other mandatory runtime dependencies may compose this source with their own
+checks; revocation/generation checks use the actual per-session control lease.
+There is no automatic initialization, loss repair or RAM fallback.
+
+At most one callback is outstanding per session. It runs outside the session
+lock, with cancellation and the old lease deadline bounding its context. A
+callback that ignores context cannot prevent transport revocation at expiry;
+it retains its checker slot and registration ownership until it actually returns.
+Native cleanup/Done wait for that return before releasing the lease/store, so
+no replacement or unbounded callback accumulation can hide the old owner.
+Late results cannot renew the closed model. Close schedules at most one stop
+request and remains bounded by its caller context even while a registry lock
+blocks cleanup; native cancellation and ownership release remain separate. Listener/aggregate memory budgets,
+launcher/key loaders, Admin mutation publication, user-security propagation and
+native Windows/runtime/storage production acceptance remain separate work.

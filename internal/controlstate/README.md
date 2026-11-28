@@ -111,16 +111,16 @@ The runtime can call Register from `GuardRegistration.Commit`, build the ack fro
 the returned path states/revision, and attach session cleanup to Binding.Release
 (including bind/ack errors). Guard supplies TLS identity and a final lease check.
 Keep the lease until native cleanup even if publication failed. Registration
-rate limiting/startup gate, ack parameters, bounded security renewal (including
-registered-but-unready sessions), revocation fanout, Admin mutation publication,
+rate limiting/startup gate, ack parameters, Admin mutation publication,
 launcher/key loaders and PostgreSQL are separate work. This owner does not assert
-SecurityReady or activate pending routes. SQL schema, SDK pin and wire contracts
-are unchanged.
+SecurityReady or activate pending routes. SQL schema and wire contracts are unchanged.
 
 `quictunnel.DurableAdmission` now supplies the bounded per-IP/per-service gate,
 negotiated ack and cleanup wiring around this owner. `ControlStore()` ensures its
 guard acquires leases in the same store; detached `ServiceIDs()` seeds only the
 configured service buckets. The required security-source assertion, listener
-handshake/memory budgets, periodic renewal/controller and launcher remain runtime
-responsibilities. `Routes().CheckPublication()` rejects a closed publication
-barrier before credential hashing/storage; it does not prove store health.
+handshake/memory budgets, launcher and additional security sources remain runtime
+responsibilities. DurableAdmission supplies bounded per-session renewal and
+SQLiteAdmissionSecurity health checks, including registered-but-unready warmup.
+`Routes().CheckPublication()` rejects a closed publication barrier before
+credential hashing/storage; it does not prove store health.

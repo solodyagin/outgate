@@ -34,15 +34,17 @@ type DurableAdmissionConfig struct {
 	Limits      RegistrationLimits
 	Policy      RegistrationPolicy
 	Bound       BoundOptions
+	Renewal     SecurityRenewal
 	Security    func(context.Context) (AdmissionSecurity, error)
 }
 
 // DurableAdmission joins bounded registration gates, verified identity/grants,
 // SQLite publication, negotiated ack and exact native cleanup. It does not own
-// listener/TLS socket budgets, security renewal or administrative activation.
+// listener/TLS socket budgets or administrative activation.
 type DurableAdmission struct {
-	config DurableAdmissionConfig
-	gate   *registrationGate
+	config     DurableAdmissionConfig
+	gate       *registrationGate
+	renewSlots chan struct{}
 }
 
 func NewDurableAdmission(config DurableAdmissionConfig) (*DurableAdmission, error) {
@@ -60,11 +62,16 @@ func NewDurableAdmission(config DurableAdmissionConfig) (*DurableAdmission, erro
 	if config.Bound.TickInterval < 0 || config.Bound.TickInterval > time.Second || config.Bound.MaxCommands < 0 || config.Bound.MaxCommands > 2048 {
 		return nil, controlstate.ErrConfig
 	}
+	renewal, err := config.Renewal.normalized()
+	if err != nil {
+		return nil, controlstate.ErrConfig
+	}
+	config.Renewal = renewal
 	gate, err := newRegistrationGate(config.Limits, config.Owner.ServiceIDs())
 	if err != nil {
 		return nil, err
 	}
-	return &DurableAdmission{config: config, gate: gate}, nil
+	return &DurableAdmission{config: config, gate: gate, renewSlots: make(chan struct{}, config.Limits.MaxConcurrent)}, nil
 }
 
 // Accept consumes one established QUIC connection. Peer IP comes exclusively
@@ -88,6 +95,7 @@ func (a *DurableAdmission) Accept(ctx context.Context, conn *quic.Conn) (*BoundS
 }
 
 func (a *DurableAdmission) security(ctx context.Context) (AdmissionSecurity, error) {
+	started := time.Now()
 	bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	state, err := a.config.Security(bounded)
@@ -96,6 +104,10 @@ func (a *DurableAdmission) security(ctx context.Context) (AdmissionSecurity, err
 	}
 	now := time.Now()
 	if bounded.Err() != nil || !state.ValidUntil.After(now) || state.ValidUntil.After(now.Add(5*time.Second)) || !state.ReadyNotBefore.IsZero() && (state.ReadyNotBefore.Unix() < 0 || state.ReadyNotBefore.Unix() >= 253402300799) {
+		return AdmissionSecurity{}, controlstate.ErrUnavailable
+	}
+	state.ValidUntil = minTime(state.ValidUntil, started.Add(5*time.Second))
+	if !state.ValidUntil.After(now) {
 		return AdmissionSecurity{}, controlstate.ErrUnavailable
 	}
 	return state, nil
@@ -170,6 +182,40 @@ func (a *DurableAdmission) admit(ctx context.Context, state tls.ConnectionState,
 		}
 		if err := checkAckSize(ack); err != nil {
 			return binding, err
+		}
+		binding.Renewal = a.config.Renewal
+		binding.RenewSecurity = func(ctx context.Context) (SecurityLease, error) {
+			// Fail closed on global checker saturation; never enqueue another query.
+			select {
+			case a.renewSlots <- struct{}{}:
+				defer func() { <-a.renewSlots }()
+			case <-ctx.Done():
+				return SecurityLease{}, ctx.Err()
+			default:
+				return SecurityLease{}, controlstate.ErrUnavailable
+			}
+			started := time.Now()
+			if err := a.config.Owner.Routes().CheckPublication(); err != nil {
+				return SecurityLease{}, err
+			}
+			expires, err := lease.Check(ctx)
+			if err != nil {
+				return SecurityLease{}, err
+			}
+			health, err := a.security(ctx)
+			if err != nil {
+				return SecurityLease{}, err
+			}
+			if health.ReadyNotBefore.After(barrier) {
+				// A new recovery window after the old barrier elapsed must also stop
+				// already admitted flows. Re-register into the new healthy warmup.
+				if !time.Now().Before(barrier) && time.Now().Before(health.ReadyNotBefore) {
+					return SecurityLease{}, controlstate.ErrUnavailable
+				}
+				barrier = health.ReadyNotBefore
+			}
+			deadline := minTime(minTime(health.ValidUntil, started.Add(5*time.Second)), minTime(expires, peer.Certificate.NotAfter))
+			return SecurityLease{Ready: !time.Now().Before(barrier), Deadline: deadline}, nil
 		}
 		return binding, nil
 	}})
