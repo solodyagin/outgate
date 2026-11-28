@@ -33,6 +33,9 @@ func (r *Registry) Lookup(rawURI, target string, expected *uint64) Decision {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.publicationBlocked {
+		return unavailable(Decision{})
+	}
 	if expected != nil {
 		s := r.services[target]
 		if s == nil {
@@ -227,6 +230,9 @@ func (r *Registry) SetReady(session *Session, ready bool) error {
 	if err != nil {
 		return err
 	}
+	if ready && r.publicationBlocked {
+		return ErrPublicationUnavailable
+	}
 	if session.draining && ready {
 		return ErrConflict
 	}
@@ -295,6 +301,9 @@ type Mount struct {
 func (r *Registry) Discovery(serviceID string) (map[string]Mount, uint64, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.publicationBlocked {
+		return nil, 0, ErrPublicationUnavailable
+	}
 	s := r.services[serviceID]
 	if s == nil {
 		return nil, 0, ErrUnknownService

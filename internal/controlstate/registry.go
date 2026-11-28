@@ -45,6 +45,10 @@ type RegistrySnapshot struct {
 // must represent exactly one next registry revision. Recheck current actor scope
 // even for retries; a committed retry returns its original safe result.
 func (s *Store) CommitRegistry(ctx context.Context, c Change, config registry.Config, data []byte, expected *uint64) (RegistryCommit, error) {
+	return s.commitRegistry(ctx, c, config, data, expected, nil)
+}
+
+func (s *Store) commitRegistry(ctx context.Context, c Change, config registry.Config, data []byte, expected *uint64, authorize func(*sql.Tx) error) (RegistryCommit, error) {
 	if s.version < 4 || len(data) == 0 || len(data) > registry.MaxSnapshotBytes || !s.registryConfigMatches(config) {
 		return RegistryCommit{}, ErrConfig
 	}
@@ -69,6 +73,11 @@ func (s *Store) CommitRegistry(ctx context.Context, c Change, config registry.Co
 		return RegistryCommit{}, ErrConfig
 	}
 	encoded, _, err := s.securityMutation(ctx, c, registryAction, request, func(tx *sql.Tx, next uint64, _ time.Time) ([]byte, Target, error) {
+		if authorize != nil {
+			if err := authorize(tx); err != nil {
+				return nil, Target{}, err
+			}
+		}
 		previous, committed, err := s.readRegistry(ctx, tx, next-1)
 		if err != nil {
 			return nil, Target{}, err

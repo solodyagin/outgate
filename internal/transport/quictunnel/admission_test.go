@@ -48,8 +48,18 @@ func TestGuardedQUICRegistrationOwnsUntilNativeCleanup(t *testing.T) {
 			must(t, err)
 			issued, err := store.IssueGrant(t.Context(), controlstate.Change{OperationID: id.String(), Actor: "deployer", ExpectedRevision: 1, Reason: "QUIC admission integration"}, controlstate.GrantBinding{ServiceID: reg.ServiceID, InstanceID: reg.InstanceID, Version: reg.Version, Paths: reg.Paths, Mounts: reg.Mounts, PathMode: reg.PathMode, RewriteMountHeaders: reg.RewriteMountHeaders, SPKI: hex.EncodeToString(spki[:]), ArtifactDigest: "sha256:" + strings.Repeat("a", 64), ExpiresAt: time.Now().Add(30 * time.Minute), CredentialGeneration: 7})
 			must(t, err)
-			routes, err := registry.New(registry.Config{Services: map[string]registry.ServiceConfig{reg.ServiceID: {AllowedPaths: reg.Paths, Rollout: registry.Rollout{Stable: reg.Version}}}})
+			registryConfig := registry.Config{Services: map[string]registry.ServiceConfig{reg.ServiceID: {AllowedPaths: reg.Paths, Rollout: registry.Rollout{Stable: reg.Version}}}}
+			bootstrap, err := registry.New(registryConfig)
 			must(t, err)
+			data, err := bootstrap.MarshalSnapshot()
+			must(t, err)
+			bootID, err := uuid.NewV7()
+			must(t, err)
+			_, err = store.CommitRegistry(t.Context(), controlstate.Change{OperationID: bootID.String(), Actor: "operator", ExpectedRevision: 2, Reason: "explicit registry bootstrap"}, registryConfig, data, nil)
+			must(t, err)
+			owner, err := controlstate.OpenRegistrationOwner(t.Context(), store, registryConfig, 3)
+			must(t, err)
+			routes := owner.Routes()
 			var before, commits, releases atomic.Int32
 			guarded, err := GuardRegistration(RegistrationGuard{Store: store, TrustDomain: "outgate.test", Before: func(context.Context, tls.ConnectionState) error {
 				before.Add(1)
@@ -62,9 +72,9 @@ func TestGuardedQUICRegistrationOwnsUntilNativeCleanup(t *testing.T) {
 				if fault == "commit" {
 					return Binding{}, controlstate.ErrUnavailable
 				}
-				// Only the registry persistence callback is synthetic. TLS, credential,
-				// generation commit, ownership and native QUIC lifecycle are real here.
-				registered, err := routes.RegisterAuthorized(received, registry.QUIC)
+				// TLS, generation fencing, snapshot/outbox publication and native
+				// cleanup use the real SQLite-backed registration owner.
+				registered, err := owner.Register(ctx, lease, received, registry.QUIC)
 				if err != nil {
 					return Binding{}, err
 				}
@@ -155,6 +165,24 @@ func TestGuardedQUICRegistrationOwnsUntilNativeCleanup(t *testing.T) {
 			}
 			if (fault == "before" || fault == "identity") && commits.Load() != 0 {
 				t.Fatal("unverified peer reached registry commit")
+			}
+			durable, err := store.LoadRegistry(t.Context(), registryConfig, 3)
+			must(t, err)
+			wantRegistryRevision := uint64(1)
+			if fault == "before" || fault == "identity" || fault == "commit" {
+				wantRegistryRevision = 0
+			}
+			if durable.Commit.RegistryRevision != wantRegistryRevision {
+				t.Fatal("ack lifecycle changed durable ownership")
+			}
+			recovered, err := registry.RestoreSnapshot(registryConfig, durable.Data)
+			must(t, err)
+			versions, err := recovered.Versions(reg.ServiceID)
+			must(t, err)
+			for _, version := range versions {
+				if version.Instances != 0 {
+					t.Fatal("recovery resurrected QUIC session")
+				}
 			}
 			must(t, store.Close()) // success proves every error path released ownership
 		})

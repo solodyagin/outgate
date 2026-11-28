@@ -97,6 +97,10 @@ func encodeSnapshot(s registrySnapshot) ([]byte, error) {
 func (r *Registry) MarshalSnapshot() ([]byte, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.marshalSnapshot()
+}
+
+func (r *Registry) marshalSnapshot() ([]byte, error) {
 	snapshot := registrySnapshot{
 		Format: 1, Revision: r.revision, Policy: r.snapshotPolicy(), FrontendOn: r.frontendOn,
 		Released: slices.Sorted(maps.Keys(r.released)), Routes: make(map[string]map[string]RouteState, len(r.routes)),

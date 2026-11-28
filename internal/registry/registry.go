@@ -96,6 +96,9 @@ type Registry struct {
 	services map[string]*service
 	sessions map[string]*Session
 
+	publicationBlocked bool
+	pendingPublication *Registry
+
 	revision      uint64
 	maxPaths      int
 	maxTunnels    int
@@ -288,6 +291,9 @@ func (r *Registry) RegisterAuthorized(reg v1.Register, transport Transport) (Reg
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	if r.publicationBlocked {
+		return Registration{}, ErrPublicationUnavailable
+	}
 	s := r.services[reg.ServiceID]
 	if s == nil {
 		return Registration{}, ErrUnknownService
@@ -434,6 +440,9 @@ func (r *Registry) Revision() uint64 {
 }
 
 func (r *Registry) checkRevision(expected uint64) error {
+	if r.publicationBlocked {
+		return ErrPublicationUnavailable
+	}
 	if r.revision != expected {
 		return ErrRevisionConflict
 	}
@@ -465,7 +474,7 @@ func (r *Registry) Versions(serviceID string) ([]VersionInfo, error) {
 		v := s.versions[name]
 		active := 0
 		for _, session := range v.sessions {
-			if session.available() {
+			if !r.publicationBlocked && session.available() {
 				active++
 			}
 		}

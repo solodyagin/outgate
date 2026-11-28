@@ -20,6 +20,9 @@ func (r *Registry) BindTransport(session *Session, reg v1.Register, transport Tr
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.publicationBlocked {
+		return Registration{}, ErrPublicationUnavailable
+	}
 	s, _, err := r.sessionVersion(session)
 	if err != nil {
 		return Registration{}, err
@@ -45,6 +48,9 @@ func (r *Registry) CanDispatch(session *Session) error {
 }
 
 func (r *Registry) canDispatch(session *Session) error {
+	if r.publicationBlocked {
+		return ErrPublicationUnavailable
+	}
 	_, v, err := r.sessionVersion(session)
 	if err != nil {
 		return err

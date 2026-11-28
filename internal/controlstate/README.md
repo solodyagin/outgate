@@ -79,3 +79,40 @@ registry mutation/commit/publication, keep existing session handles valid, and
 hold readiness closed after uncertain commit until resync. `RestoreSnapshot` is
 only cold recovery; swapping it into a live transport owner invalidates handles.
 The QUIC registration guard still needs a production commit/publication owner.
+
+## Live registration publication
+
+`OpenRegistrationOwner` loads an explicitly bootstrapped registry using the
+trusted configuration, installation epoch and a minimum control revision. It
+freezes the configuration and retains the observed watermark. It never creates a
+missing snapshot or restores live sessions. Use its stable `Routes()` registry
+for transport binding, readiness, routing and cleanup; do not mutate durable
+state through that registry's RAM-only Authorized methods.
+
+`RegistrationOwner.Register` takes an `AcquireRegistration` lease and constructs
+one candidate. Inside the same SQLite transaction as the snapshot, operation,
+control revision and audit outbox, it rechecks the lease's private exact ownership,
+current grant service/instance/version/paths/mounts/mode/rewrite/generation,
+expiry, generation fence and service/grant/SPKI/certificate revocations. Ownership
+is pinned until the transaction finishes, using the same SQL-to-ownership lock
+order as admission. Exported mutable lease metadata is never authorization.
+Concurrent security changes fail the global control CAS rather than silently
+publishing under a different authorization revision. No automatic retry occurs.
+
+Only a confirmed commit publishes the candidate. Existing runtime handles remain
+valid; the returned fresh session is unready. Failure/panic in persistence closes
+the registry publication barrier. `Resync` performs a verified bounded store read
+at or above the retained watermark and reconciles only the known old state or
+uncertain candidate. It never acknowledges the failed admission, resurrects its
+session, undoes cleanup or restores readiness. A mismatched/corrupt/rolled-back
+snapshot leaves the barrier closed; unrelated durable changes need cold recovery.
+
+The runtime can call Register from `GuardRegistration.Commit`, build the ack from
+the returned path states/revision, and attach session cleanup to Binding.Release
+(including bind/ack errors). Guard supplies TLS identity and a final lease check.
+Keep the lease until native cleanup even if publication failed. Registration
+rate limiting/startup gate, ack parameters, bounded security renewal (including
+registered-but-unready sessions), revocation fanout, Admin mutation publication,
+launcher/key loaders and PostgreSQL are separate work. This owner does not assert
+SecurityReady or activate pending routes. SQL schema, SDK pin and wire contracts
+are unchanged.

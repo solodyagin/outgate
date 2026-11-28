@@ -204,14 +204,18 @@ func (s *Store) verifyDeploymentGrant(ctx context.Context, q queryer, credential
 		return GrantRecord{}, err
 	}
 	digest := sha256.Sum256(secret)
+	if subtle.ConstantTimeCompare(digest[:], hash) != 1 || !registrationMatchesGrant(reg, record) {
+		return GrantRecord{}, ErrDenied
+	}
+	return record, nil
+}
+
+func registrationMatchesGrant(reg v1.Register, record GrantRecord) bool {
 	paths := slices.Clone(reg.Paths)
 	slices.Sort(paths)
 	generation := uint64(0)
 	if reg.CredentialGeneration != nil {
 		generation = uint64(*reg.CredentialGeneration)
 	}
-	if subtle.ConstantTimeCompare(digest[:], hash) != 1 || reg.ServiceID != record.ServiceID || reg.InstanceID != record.InstanceID || reg.Version != record.Version || reg.PathMode != record.PathMode || reg.RewriteMountHeaders != record.RewriteMountHeaders || !slices.Equal(paths, record.Paths) || !maps.Equal(reg.Mounts, record.Mounts) || generation != record.CredentialGeneration {
-		return GrantRecord{}, ErrDenied
-	}
-	return record, nil
+	return reg.ServiceID == record.ServiceID && reg.InstanceID == record.InstanceID && reg.Version == record.Version && reg.PathMode == record.PathMode && reg.RewriteMountHeaders == record.RewriteMountHeaders && slices.Equal(paths, record.Paths) && maps.Equal(reg.Mounts, record.Mounts) && generation == record.CredentialGeneration
 }
