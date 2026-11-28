@@ -3,9 +3,12 @@ module github.com/solodyagin/outgate
 go 1.27.4
 
 require (
+	github.com/dlclark/regexp2 v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/quic-go/quic-go v0.65.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/solodyagin/outgate-sdk v0.0.0-20261128125504-8d6f0d2643d0
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/sys v0.50.0
 	modernc.org/sqlite v1.62.0
 )
