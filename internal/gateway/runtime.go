@@ -231,7 +231,7 @@ func newRuntime(tunnel tunnelOwner, server *http.Server, limits servicecall.Conn
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &Runtime{tunnel: tunnel, server: server, handler: server.Handler, maxRequests: maxRequests, cancel: cancel, serveDone: make(chan struct{}), closed: make(chan struct{}), force: make(chan struct{})}
 	server.BaseContext = func(net.Listener) context.Context { return ctx }
-	server.Handler = http.HandlerFunc(r.serveHTTP)
+	server.Handler = servicecall.ComposeRuntimeHandler(server.Handler, func(next http.Handler) http.Handler { r.handler = next; return http.HandlerFunc(r.serveHTTP) })
 	// Wrap when Serve receives the socket, rather than opening a listener here.
 	r.connectionLimits = limits
 	return r
@@ -254,7 +254,7 @@ func (r *Runtime) serveHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.active--; r.mu.Unlock(); r.handlers.Done() }()
 	if err := r.ready(req.Context()); err != nil {
-		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		http.Error(w, "unavailable", servicecall.RequestStatus(req.Context(), http.StatusServiceUnavailable))
 		return
 	}
 	r.handler.ServeHTTP(w, req)

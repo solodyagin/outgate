@@ -63,6 +63,8 @@ func TestSecurityBindingOpensRealSharedRuntime(t *testing.T) {
 	check(err)
 	base, err := transportPlan.Bind(gateway.Config{})
 	check(err)
+	base, err = BindHTTPPolicy(doc, base)
+	check(err)
 	base, err = BindSharedResources(doc, base, 65536)
 	check(err)
 	base, err = statePlan.Bind(base)

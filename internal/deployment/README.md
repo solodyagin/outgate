@@ -91,3 +91,8 @@ rates, native buffer/wire limits and TLS/registration deadlines, using runtime-s
 IO-free validation. Fixed unsupported tuning is rejected. The constructor harness
 now combines all four projections from one YAML document with explicit installation
 evidence and measured reservations; complete launch mapping remains unfinished.
+
+`BindHTTPPolicy` maps signed ingress rate/burst and routing HTTP header/body-idle/
+overall deadlines. The gate remains outside shared readiness and the deadlines
+cannot extend existing security leases. See [HTTP policy behavior](../servicecall/http-policy.md).
+Body-size/WebSocket/session/FD limits and full launch-profile inventory remain deferred.

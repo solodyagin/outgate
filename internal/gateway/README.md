@@ -127,3 +127,8 @@ QUIC сохраняется до actual worker cleanup, TCP — до возвр�
 TLS/registration deadlines из YAML + explicit owner reservations. Его pure validator
 разделяет проверки с runtime construction. Fixed heartbeat/shutdown/bootstrap-control
 настройки принимаются только в поддерживаемом профиле. См. [границы transport mapping](../deployment/transport.md).
+
+`servicecall.ComposeRuntimeHandler` оставляет signed GlobalRate и overall HTTP
+budget перед shared readiness/store checks, сохраняя одну token charge на запрос.
+Header/body-idle deadlines применяются в signed dispatch; более короткие security
+leases по-прежнему ограничивают exchange. См. [границы HTTP policy](../servicecall/http-policy.md).

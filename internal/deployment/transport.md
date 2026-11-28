@@ -57,9 +57,11 @@ deadline closes the connection through the bootstrap protocol-error boundary.
 There is no replay-warmup bypass or signed business dispatch in these tests.
 
 This projection does not map public browser/Admin listeners, outgoing SDK dialing,
-WSS, HTTP response-header/body-idle/overall deadlines, WebSocket timeouts, target or
-session/stream/FD budgets, global signed request rates, grants/access publication,
+WSS, WebSocket timeouts, target or session/stream/FD budgets, grants/access publication,
 JWT/JWKS or a complete launch-field inventory. Those remain required before a full
 launcher can accept a deployment. Inactive WSS and other deferred sections are not
 claims of supported runtime behavior. The shared pool counts charged reservations,
 not measured RSS or all resource use.
+
+HTTP response-header/body-idle/overall deadlines and signed request rates are mapped
+separately by `BindHTTPPolicy`; they do not extend the existing security lease.

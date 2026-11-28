@@ -55,6 +55,8 @@ type Replay interface {
 }
 
 type Config struct {
+	HTTP               HTTPPolicy
+	GlobalRate         GlobalRate
 	Certificate        tls.Certificate
 	ClientRoots        *x509.CertPool
 	TrustDomain        string
@@ -92,6 +94,15 @@ type handler struct {
 // NewServer prepares the dedicated mTLS listener. The runtime owns listener
 // startup, shutdown, connection quotas, security state and replay lifecycle.
 func NewServer(config Config) (*http.Server, error) {
+	policy, err := config.HTTP.normalized()
+	if err != nil {
+		return nil, err
+	}
+	config.HTTP = policy
+	bucket, err := newRequestBucket(config.GlobalRate)
+	if err != nil {
+		return nil, err
+	}
 	if len(config.AllowedAuthorities) == 0 {
 		return nil, ErrConfig
 	}
@@ -133,7 +144,7 @@ func NewServer(config Config) (*http.Server, error) {
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    32768,
-		Handler:           &handler{config: config, verifier: verifier, signer: signer, authorities: authorities},
+		Handler:           &ingressHandler{next: &handler{config: config, verifier: verifier, signer: signer, authorities: authorities}, bucket: bucket, policy: policy},
 	}, nil
 }
 
@@ -141,27 +152,27 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	now := time.Now()
 	peer, ok := verifiedPeer(req.TLS, h.config.TrustDomain, now)
 	if !ok {
-		reject(w, http.StatusUnauthorized)
+		rejectRequest(w, req, http.StatusUnauthorized)
 		return
 	}
 	if _, allowed := h.authorities[req.Host]; !allowed {
-		reject(w, http.StatusMisdirectedRequest)
+		rejectRequest(w, req, http.StatusMisdirectedRequest)
 		return
 	}
 	meta, fields, err := requestMetadata(req)
 	if err != nil {
-		reject(w, http.StatusUnauthorized)
+		rejectRequest(w, req, http.StatusUnauthorized)
 		return
 	}
 	path, _ := v1.DecodeRoutePath(meta.RawURI) // metadata validation already checked it
 	if v1.MatchesPrefix("/outgate/discovery", path) || v1.MatchesPrefix("/outgate/revocations", path) {
-		reject(w, http.StatusNotFound)
+		rejectRequest(w, req, http.StatusNotFound)
 		return
 	}
 	input, err := httpsig.ParseSignatureInput(fields.Get("Signature-Input"))
 	if err != nil || input.Label != httpsig.Call || fields.Get("X-Outgate-Caller-Service") != peer.ServiceID ||
 		fields.Get("X-Outgate-Deployment-Grant-Id") == "" {
-		reject(w, http.StatusUnauthorized)
+		rejectRequest(w, req, http.StatusUnauthorized)
 		return
 	}
 	deadline := now.Add(5 * time.Second)
@@ -173,13 +184,13 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	grantID := fields.Get("X-Outgate-Deployment-Grant-Id")
 	key, err := h.config.Authenticate(admission, peer, grantID, input.Params.KeyID)
 	if err != nil {
-		reject(w, statusFor(err))
+		rejectRequest(w, req, statusFor(err))
 		return
 	}
 	binding := delivery.Binding{Caller: peer.ServiceID, Target: fields.Get("X-Outgate-Target-Service"), GrantID: grantID}
 	verified, err := h.verifier.Verify(meta, key, binding, time.Now())
 	if err != nil {
-		reject(w, http.StatusUnauthorized)
+		rejectRequest(w, req, http.StatusUnauthorized)
 		return
 	}
 	identity, hasUser := verified.Identity()
@@ -187,7 +198,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		Method: meta.Method, Path: path, RawURI: meta.RawURI, KeyID: key.ID, User: identity, HasUser: hasUser}
 	until, err := h.config.Authorize(admission, call)
 	if err != nil {
-		reject(w, statusFor(err))
+		rejectRequest(w, req, statusFor(err))
 		return
 	}
 	if hasUser && identity.ExpiresAt.Before(until) {
@@ -199,7 +210,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ctx, stop := context.WithDeadline(admission, deadline)
 	defer stop()
 	if ctx.Err() != nil || !time.Now().Before(deadline) {
-		reject(w, http.StatusServiceUnavailable)
+		rejectRequest(w, req, http.StatusServiceUnavailable)
 		return
 	}
 
@@ -214,21 +225,21 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		if status == 0 {
 			status = http.StatusServiceUnavailable
 		}
-		reject(w, status)
+		rejectRequest(w, req, status)
 		return
 	}
 	if err := h.config.Routes.CanDispatchRoute(route, meta.RawURI); err != nil {
-		reject(w, statusFor(err))
+		rejectRequest(w, req, statusFor(err))
 		return
 	}
 	recipient, err := h.config.Resolve(ctx, route)
 	if err != nil {
-		reject(w, statusFor(err))
+		rejectRequest(w, req, statusFor(err))
 		return
 	}
 	if recipient.Transport == nil || recipient.Transport.Handle() != route.Session ||
 		subtle.ConstantTimeCompare(key.Secret, recipient.Key.Secret) == 1 {
-		reject(w, http.StatusServiceUnavailable)
+		rejectRequest(w, req, http.StatusServiceUnavailable)
 		return
 	}
 	if !recipient.ValidUntil.IsZero() && recipient.ValidUntil.Before(deadline) {
@@ -238,57 +249,76 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		defer release()
 	}
 	if ctx.Err() != nil || !time.Now().Before(deadline) {
-		reject(w, http.StatusServiceUnavailable)
+		rejectRequest(w, req, http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.config.Replay.Ready(ctx); err != nil {
-		reject(w, http.StatusServiceUnavailable)
+		rejectRequest(w, req, http.StatusServiceUnavailable)
 		return
 	}
 	// Prepare the egress signature before spending a nonce on a configuration
 	// error. No I/O occurs here and the request body remains on the ingress.
 	outgoing, err := h.outgoing(req, meta, route, recipient.Key)
 	if err != nil {
-		reject(w, http.StatusServiceUnavailable)
+		rejectRequest(w, req, http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.config.Routes.CanDispatchRoute(route, meta.RawURI); err != nil {
-		reject(w, statusFor(err))
+		rejectRequest(w, req, statusFor(err))
 		return
 	}
 	if err := verified.Signature().Reserve(ctx, h.config.Replay, h.config.ReplayNamespace, time.Now()); err != nil {
-		reject(w, statusFor(err))
+		rejectRequest(w, req, statusFor(err))
 		return
 	}
 	if ctx.Err() != nil || !time.Now().Before(deadline) {
-		reject(w, http.StatusServiceUnavailable)
+		rejectRequest(w, req, http.StatusServiceUnavailable)
 		return
 	}
 	if !verified.Signature().ValidAt(time.Now()) {
-		reject(w, http.StatusUnauthorized)
+		rejectRequest(w, req, http.StatusUnauthorized)
 		return
 	}
 	if h.config.Revalidate != nil {
 		if err := h.config.Revalidate(ctx, call, key, route, recipient); err != nil {
-			reject(w, statusFor(err))
+			rejectRequest(w, req, statusFor(err))
 			return
 		}
 	}
 	if ctx.Err() != nil || !time.Now().Before(deadline) {
-		reject(w, http.StatusServiceUnavailable)
+		rejectRequest(w, req, http.StatusServiceUnavailable)
 		return
 	}
 	if err := h.config.Routes.CanDispatchRoute(route, meta.RawURI); err != nil {
-		reject(w, statusFor(err))
+		rejectRequest(w, req, statusFor(err))
 		return
 	}
+	exchange, cancelExchange := context.WithCancelCause(ctx)
+	defer cancelExchange(nil)
+	controller := http.NewResponseController(w)
+	ioState := &exchangeIO{controller: controller, cancel: cancelExchange}
+	abort := ioState.fail
+	wakeDone := make(chan struct{})
+	stopWake := context.AfterFunc(exchange, func() {
+		defer close(wakeDone)
+		ioState.abort()
+	})
+	defer func() {
+		if !stopWake() {
+			<-wakeDone
+		}
+	}()
 	proxy := httputil.ReverseProxy{
-		Transport: recipient.Transport,
+		Transport: timedTransport{next: recipient.Transport, ctx: exchange, cancel: abort, policy: h.config.HTTP, ioState: ioState},
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.Out.URL, pr.Out.Host, pr.Out.Header = outgoing.URL, outgoing.Host, outgoing.Header
 		},
 		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-			reject(w, http.StatusBadGateway)
+			if wrapped, ok := w.(*deadlineWriter); ok {
+				w = wrapped.ResponseWriter
+			}
+			_ = controller.SetWriteDeadline(deadline)
+			reject(w, ioState.status(exchange, http.StatusBadGateway))
 		},
 	}
 	if route.Session.Instance().RewriteMountHeaders {
@@ -302,7 +332,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	response := http.NewResponseController(w)
 	_ = response.SetReadDeadline(deadline)
 	_ = response.SetWriteDeadline(deadline)
-	proxy.ServeHTTP(w, req.WithContext(ctx))
+	proxy.ServeHTTP(&deadlineWriter{ResponseWriter: w, ctx: exchange, idle: h.config.HTTP.BodyIdleTimeout, cancel: abort, ioState: ioState}, req.WithContext(exchange))
 }
 
 func verifiedPeer(state *tls.ConnectionState, domain string, now time.Time) (Peer, bool) {
